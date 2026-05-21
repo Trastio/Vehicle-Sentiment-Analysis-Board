@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>比亚迪秦PLUS - 可视化报告</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts-wordcloud@2.1.0/dist/echarts-wordcloud.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #0a0f1e; color: #e2e8f0; min-height: 100vh; }
+.top-bar { position: sticky; top: 0; z-index: 100; background: rgba(15, 23, 42, 0.92); backdrop-filter: blur(16px); border-bottom: 1px solid rgba(96, 165, 250, 0.12); padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; }
+.top-bar-left { display: flex; align-items: center; gap: 12px; }
+.top-bar-logo { width: 32px; height: 32px; background: linear-gradient(135deg, #3b82f6, #8b5cf6); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 14px; color: #fff; }
+.top-bar-title { font-size: 15px; font-weight: 600; color: #e2e8f0; }
+.top-bar-subtitle { font-size: 11px; color: #64748b; margin-top: 1px; }
+.top-bar-right { display: flex; align-items: center; gap: 10px; }
+.top-bar-btn { padding: 6px 14px; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.2); border-radius: 8px; color: #60a5fa; font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; gap: 6px; text-decoration: none; }
+.top-bar-btn:hover { background: rgba(59, 130, 246, 0.2); border-color: rgba(59, 130, 246, 0.4); color: #93c5fd; }
+.container { max-width: 960px; margin: 0 auto; padding: 24px; }
+h1 { text-align: center; font-size: 22px; margin-bottom: 8px; background: linear-gradient(135deg, #60a5fa, #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+.report-time { text-align: center; font-size: 12px; color: #64748b; margin-bottom: 24px; }
+.section { background: #111827; border: 1px solid rgba(96, 165, 250, 0.08); border-radius: 14px; padding: 20px; margin-bottom: 20px; }
+h2 { font-size: 15px; color: #94a3b8; margin-bottom: 16px; border-bottom: 1px solid rgba(96, 165, 250, 0.1); padding-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+.stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 24px; }
+.stat-card { background: linear-gradient(135deg, #111827, #1a2332); border: 1px solid rgba(96, 165, 250, 0.08); border-radius: 14px; padding: 20px; text-align: center; transition: transform 0.2s, box-shadow 0.2s; }
+.stat-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
+.stat-value { font-size: 32px; font-weight: 700; }
+.stat-label { font-size: 12px; color: #64748b; margin-top: 4px; letter-spacing: 0.5px; }
+.stat-positive .stat-value { color: #4ade80; }
+.stat-negative .stat-value { color: #f87171; }
+.stat-neutral .stat-value { color: #fbbf24; }
+.chart-container { width: 100%; height: 300px; }
+.charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.alert-section { border: 1px solid rgba(239,68,68,0.2); background: linear-gradient(135deg, #111827, #1a1020); }
+.alert-item { padding: 14px; margin-bottom: 10px; border-radius: 10px; background: rgba(0,0,0,0.3); }
+.alert-critical { border-left: 4px solid #ef4444; }
+.alert-warning { border-left: 4px solid #f59e0b; }
+.alert-title { font-weight: 600; color: #f87171; margin-bottom: 6px; font-size: 14px; }
+.alert-content { font-size: 13px; color: #cbd5e1; line-height: 1.6; }
+.alert-reason { font-size: 12px; color: #94a3b8; margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.05); }
+.agent-section { border: 1px solid rgba(96,165,250,0.15); background: linear-gradient(135deg, #111827, #0f1a2e); }
+.agent-conclusion { font-size: 15px; line-height: 1.8; margin-bottom: 14px; color: #e2e8f0; }
+.agent-points { padding-left: 20px; }
+.agent-points li { margin-bottom: 8px; line-height: 1.6; color: #cbd5e1; font-size: 13px; }
+.agent-points li::marker { color: #60a5fa; }
+.insight-section { border: 1px solid rgba(168,85,247,0.15); background: linear-gradient(135deg, #111827, #1a0f2e); }
+.insight-content { line-height: 1.8; color: #cbd5e1; font-size: 14px; }
+.footer { text-align: center; padding: 24px; font-size: 12px; color: #475569; border-top: 1px solid rgba(96,165,250,0.08); margin-top: 20px; }
+@media print {
+    .top-bar { position: static; background: #fff; color: #000; border-bottom: 2px solid #e2e8f0; }
+    .top-bar-title, .top-bar-subtitle { color: #000; }
+    .top-bar-btn { display: none; }
+    body { background: #fff; color: #1e293b; }
+    .section { background: #fff; border: 1px solid #e2e8f0; }
+    .stat-card { background: #f8fafc; border: 1px solid #e2e8f0; }
+    h1 { -webkit-text-fill-color: #1e40af; color: #1e40af; }
+    h2 { color: #334155; border-color: #e2e8f0; }
+}
+@media (max-width: 640px) {
+    .charts-row { grid-template-columns: 1fr; }
+    .stats-grid { grid-template-columns: 1fr; }
+    .container { padding: 12px; }
+    .top-bar { padding: 10px 14px; }
+}
+</style>
+</head>
+<body>
+<div class="top-bar">
+    <div class="top-bar-left">
+        <div class="top-bar-logo">🚗</div>
+        <div>
+            <div class="top-bar-title">AutoPulse 可视化报告</div>
+            <div class="top-bar-subtitle">比亚迪秦PLUS 舆情数据看板</div>
+        </div>
+    </div>
+    <div class="top-bar-right">
+        <button class="top-bar-btn" onclick="window.print()">🖨️ 打印</button>
+        <button class="top-bar-btn" onclick="window.close()">✕ 关闭</button>
+    </div>
+</div>
+<div class="container">
+<h1>📊 比亚迪秦PLUS 舆情可视化报告</h1>
+<div class="report-time">报告生成时间：2026-05-04 18:22</div>
+
+<div class="stats-grid">
+    <div class="stat-card stat-positive">
+        <div class="stat-value">3</div>
+        <div class="stat-label">正面舆情</div>
+    </div>
+    <div class="stat-card stat-negative">
+        <div class="stat-value">6</div>
+        <div class="stat-label">负面舆情</div>
+    </div>
+    <div class="stat-card stat-neutral">
+        <div class="stat-value">18</div>
+        <div class="stat-label">中性舆情</div>
+    </div>
+</div>
+
+
+        <div class="section agent-section">
+            <h2>🤖 AI 分析摘要</h2>
+            <div class="agent-conclusion">比亚迪秦PLUS当前网络声量整体较低（仅27条），但负面声量占比22.2%，明显高于正面（11.1%），口碑风险不容忽视。</div>
+            <ul class="agent-points"><li>整体声量极小，中性讨论占主导（66.7%），正面信息仅3条，口碑引导空间较大。</li><li>负面信息高度集中在抖音平台，6条负面中有3条来自抖音，占比60%，存在短视频端负面裂变风险。</li><li>热点词中“竞品”出现4次，消费者已在主动对比其他车型，需警惕对比评价对购车决策的干扰。</li><li>内容以车主真实体验和分享为主，“分享”“体验”“车主”“续航”等词高频，说明UGC内容对购车影响较大。</li><li>出现3条高互动量负面帖，涉及异响、竞品对比、发动机故障灯，单条最高互动达6138次，需优先处置。</li></ul>
+        </div>
+
+        <div class="section alert-section">
+            <h2>⚠️ 重大舆情预警</h2>
+            
+            <div class="alert-item alert-warning">
+                <div class="alert-title">比亚迪秦PLUS实拍异响问题</div>
+                <div class="alert-content">比亚迪秦PLUS实拍异响问题比亚迪秦PLUS实拍异响问题</div>
+                <div class="alert-reason">高互动量负面内容（互动3309次）</div>
+            </div>
+            <div class="alert-item alert-warning">
+                <div class="alert-title">比亚迪秦PLUS和竞品对比，差距明显</div>
+                <div class="alert-content">比亚迪秦PLUS和竞品对比，差距明显比亚迪秦PLUS和竞品对比，差距明显</div>
+                <div class="alert-reason">高互动量负面内容（互动1200次）</div>
+            </div>
+            <div class="alert-item alert-warning">
+                <div class="alert-title">比亚迪秦PLUS求助：发动机故障灯亮了</div>
+                <div class="alert-content">比亚迪秦PLUS求助：发动机故障灯亮了比亚迪秦PLUS求助：发动机故障灯亮了</div>
+                <div class="alert-reason">高互动量负面内容（互动6138次）</div>
+            </div>
+            <div class="alert-item alert-warning">
+                <div class="alert-title">比亚迪秦PLUS降价了，老车主心里苦</div>
+                <div class="alert-content">比亚迪秦PLUS降价了，老车主心里苦比亚迪秦PLUS降价了，老车主心里苦</div>
+                <div class="alert-reason">高互动量负面内容（互动1754次）</div>
+            </div>
+            <div class="alert-item alert-warning">
+                <div class="alert-title">比亚迪秦PLUS避坑！这些缺点你必须知道</div>
+                <div class="alert-content">比亚迪秦PLUS避坑！这些缺点你必须知道比亚迪秦PLUS避坑！这些缺点你必须知道</div>
+                <div class="alert-reason">高互动量负面内容（互动4174次）</div>
+            </div>
+        </div>
+
+<div class="charts-row">
+    <div class="section">
+        <h2>📈 情感分布</h2>
+        <div id="sentimentChart" class="chart-container"></div>
+    </div>
+    <div class="section">
+        <h2>☁️ 热点词云</h2>
+        <div id="keywordChart" class="chart-container"></div>
+    </div>
+</div>
+
+<div class="charts-row">
+    <div class="section">
+        <h2>📊 平台声量</h2>
+        <div id="volumeChart" class="chart-container"></div>
+    </div>
+    <div class="section">
+        <h2>📉 时间趋势</h2>
+        <div id="trendChart" class="chart-container"></div>
+    </div>
+</div>
+
+
+        <div class="section insight-section">
+            <h2>💡 深度洞察</h2>
+            <div class="insight-content"></div>
+        </div>
+
+<div class="footer">AutoPulse 汽车舆情智能监控系统 | 本报告由AI辅助生成，数据仅供参考</div>
+</div>
+
+<script>
+var sentimentData = {"positive": 3, "negative": 6, "neutral": 18};
+var keywordData = [{"name": "比亚迪", "value": 1.0}, {"name": "PLUS", "value": 1.0}, {"name": "分享", "value": 0.15}, {"name": "体验", "value": 0.11}, {"name": "车主", "value": 0.11}, {"name": "竞品", "value": 0.07}, {"name": "感受", "value": 0.07}, {"name": "真实", "value": 0.07}, {"name": "深度", "value": 0.04}, {"name": "测评", "value": 0.04}, {"name": "干货", "value": 0.04}, {"name": "满满", "value": 0.04}, {"name": "续航", "value": 0.04}, {"name": "实测", "value": 0.04}, {"name": "结果", "value": 0.04}, {"name": "出乎意料", "value": 0.04}, {"name": "实拍", "value": 0.04}, {"name": "异响", "value": 0.04}, {"name": "问题", "value": 0.04}, {"name": "准备", "value": 0.04}, {"name": "需要", "value": 0.04}, {"name": "注意", "value": 0.04}, {"name": "对比", "value": 0.04}, {"name": "差距", "value": 0.04}, {"name": "明显", "value": 0.04}, {"name": "吐槽", "value": 0.04}, {"name": "一下", "value": 0.04}, {"name": "售后服务", "value": 0.04}, {"name": "为什么", "value": 0.04}, {"name": "选择", "value": 0.04}];
+var volumeData = [{"platform": "weibo", "count": 5, "positive_count": 0, "negative_count": 1, "neutral_count": 4}, {"platform": "douyin", "count": 5, "positive_count": 1, "negative_count": 3, "neutral_count": 1}, {"platform": "xhs", "count": 5, "positive_count": 1, "negative_count": 1, "neutral_count": 3}, {"platform": "bili", "count": 3, "positive_count": 0, "negative_count": 0, "neutral_count": 3}, {"platform": "zhihu", "count": 3, "positive_count": 0, "negative_count": 0, "neutral_count": 3}, {"platform": "tieba", "count": 3, "positive_count": 0, "negative_count": 1, "neutral_count": 2}, {"platform": "kuaishou", "count": 3, "positive_count": 1, "negative_count": 0, "neutral_count": 2}];
+var trendsData = [{"date": "2026-04-04", "total": 1, "positive": 0, "negative": 1, "neutral": 0}, {"date": "2026-04-06", "total": 2, "positive": 0, "negative": 0, "neutral": 2}, {"date": "2026-04-08", "total": 2, "positive": 0, "negative": 0, "neutral": 2}, {"date": "2026-04-09", "total": 1, "positive": 0, "negative": 0, "neutral": 1}, {"date": "2026-04-10", "total": 2, "positive": 1, "negative": 1, "neutral": 0}, {"date": "2026-04-12", "total": 1, "positive": 0, "negative": 0, "neutral": 1}, {"date": "2026-04-13", "total": 1, "positive": 1, "negative": 0, "neutral": 0}, {"date": "2026-04-15", "total": 2, "positive": 0, "negative": 0, "neutral": 2}, {"date": "2026-04-16", "total": 1, "positive": 0, "negative": 0, "neutral": 1}, {"date": "2026-04-17", "total": 2, "positive": 0, "negative": 1, "neutral": 1}, {"date": "2026-04-21", "total": 2, "positive": 1, "negative": 0, "neutral": 1}, {"date": "2026-04-23", "total": 1, "positive": 0, "negative": 1, "neutral": 0}, {"date": "2026-04-24", "total": 1, "positive": 0, "negative": 0, "neutral": 1}, {"date": "2026-04-25", "total": 1, "positive": 0, "negative": 0, "neutral": 1}, {"date": "2026-04-26", "total": 1, "positive": 0, "negative": 0, "neutral": 1}, {"date": "2026-04-27", "total": 1, "positive": 0, "negative": 0, "neutral": 1}, {"date": "2026-04-30", "total": 1, "positive": 0, "negative": 1, "neutral": 0}, {"date": "2026-05-01", "total": 2, "positive": 0, "negative": 1, "neutral": 1}, {"date": "2026-05-02", "total": 1, "positive": 0, "negative": 0, "neutral": 1}, {"date": "2026-05-03", "total": 1, "positive": 0, "negative": 0, "neutral": 1}];
+
+var sentimentChart = echarts.init(document.getElementById('sentimentChart'));
+sentimentChart.setOption({
+    tooltip: { trigger: 'item' },
+    series: [{
+        type: 'pie', radius: ['40%', '70%'],
+        data: [
+            { value: sentimentData.positive || 0, name: '正面', itemStyle: { color: '#4ade80' } },
+            { value: sentimentData.negative || 0, name: '负面', itemStyle: { color: '#f87171' } },
+            { value: sentimentData.neutral || 0, name: '中性', itemStyle: { color: '#fbbf24' } }
+        ],
+        label: { color: '#e2e8f0' }
+    }]
+});
+
+var keywordChart = echarts.init(document.getElementById('keywordChart'));
+keywordChart.setOption({
+    tooltip: {},
+    series: [{
+        type: 'wordCloud',
+        shape: 'circle',
+        sizeRange: [12, 40],
+        rotationRange: [-45, 45],
+        gridSize: 8,
+        textStyle: { color: function() { var colors = ['#60a5fa','#4ade80','#fbbf24','#f87171','#a78bfa']; return colors[Math.floor(Math.random()*colors.length)]; } },
+        data: keywordData
+    }]
+});
+
+var volumeChart = echarts.init(document.getElementById('volumeChart'));
+var volNames = (volumeData || []).map(function(d) { return d.name || d.platform || ''; });
+var volValues = (volumeData || []).map(function(d) { return d.value || d.count || 0; });
+volumeChart.setOption({
+    tooltip: { trigger: 'axis' },
+    xAxis: { type: 'category', data: volNames, axisLabel: { color: '#94a3b8' } },
+    yAxis: { type: 'value', axisLabel: { color: '#94a3b8' } },
+    series: [{ type: 'bar', data: volValues, itemStyle: { color: '#60a5fa' } }]
+});
+
+var trendChart = echarts.init(document.getElementById('trendChart'));
+var tDates = (trendsData || []).map(function(d) { return d.date || d.time || ''; });
+var tValues = (trendsData || []).map(function(d) { return d.count || d.value || 0; });
+trendChart.setOption({
+    tooltip: { trigger: 'axis' },
+    xAxis: { type: 'category', data: tDates, axisLabel: { color: '#94a3b8' } },
+    yAxis: { type: 'value', axisLabel: { color: '#94a3b8' } },
+    series: [{ type: 'line', data: tValues, smooth: true, itemStyle: { color: '#4ade80' }, areaStyle: { color: 'rgba(74,222,128,0.1)' } }]
+});
+
+window.addEventListener('resize', function() {
+    sentimentChart.resize();
+    keywordChart.resize();
+    volumeChart.resize();
+    trendChart.resize();
+});
+
+try {
+    var height = document.body.scrollHeight;
+    window.parent.postMessage({ type: 'iframe-resize', height: height }, '*');
+} catch(e) {}
+</script>
+</body>
+</html>

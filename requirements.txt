@@ -1,0 +1,14 @@
+flask==3.1.0
+flask-socketio==5.4.1
+python-socketio==5.12.1
+python-engineio==4.11.1
+langgraph==1.0.10
+langchain-core==1.2.27
+langchain-openai==1.1.12
+pydantic==2.11.3
+pydantic-settings==2.9.1
+python-dotenv==1.1.0
+tavily-python==0.7.3
+loguru==0.7.3
+jieba==0.42.1
+requests==2.32.3
