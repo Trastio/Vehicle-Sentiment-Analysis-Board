@@ -112,7 +112,6 @@ async def create_dialog_anchor(req: AnchorDialogRequest, session: AsyncSession =
     context = await _build_context(req.vehicle_id, req.anchor_type, req.anchor_data, session)
     chunks = await generate_dialog_response(vehicle.name, context, req.message, history)
 
-    # Save user message
     if req.message:
         user_msg = DialogMessage(
             id=str(uuid.uuid4()),
@@ -122,9 +121,9 @@ async def create_dialog_anchor(req: AnchorDialogRequest, session: AsyncSession =
         )
         session.add(user_msg)
 
-    # Save assistant response
+    parsed_chunks = [json.loads(c) for c in chunks]
     full_content = "\n".join(
-        json.loads(c)["content"] for c in chunks if json.loads(c).get("type") == "text"
+        p["content"] for p in parsed_chunks if p.get("type") == "text"
     )
     assistant_msg = DialogMessage(
         id=str(uuid.uuid4()),
@@ -136,13 +135,8 @@ async def create_dialog_anchor(req: AnchorDialogRequest, session: AsyncSession =
     await session.commit()
 
     async def event_stream():
-        for chunk in chunks:
-            parsed = json.loads(chunk)
-            if parsed.get("type") == "done":
-                parsed["conversation_id"] = conv_id
-                yield f"data: {json.dumps(parsed, ensure_ascii=False)}\n\n"
-            else:
-                yield f"data: {json.dumps(parsed, ensure_ascii=False)}\n\n"
+        for p in parsed_chunks:
+            yield f"data: {json.dumps(p, ensure_ascii=False)}\n\n"
         yield f"data: {json.dumps({'type': 'done', 'conversation_id': conv_id}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

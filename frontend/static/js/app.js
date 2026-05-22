@@ -16,6 +16,12 @@ createApp({
             newVehicle: { name: "", brand: "", search_keywords: "" },
             showAddModal: false,
             loading: false,
+            dialogOpen: false,
+            dialogAnchorType: "",
+            dialogAnchorData: {},
+            dialogMessages: [],
+            dialogConversationId: null,
+            dialogInput: "",
         };
     },
     async mounted() {
@@ -67,6 +73,25 @@ createApp({
             this.trendData = await resp.json();
             this.renderTrendChart();
         },
+        bindChartClick(chart, anchorType) {
+            if (!chart) return;
+            chart.getZr().on("click", (params) => {
+                const pointInPixel = [params.offsetX, params.offsetY];
+                if (chart.containPixel("grid", pointInPixel)) {
+                    const xIndex = chart.convertFromPixel({ seriesIndex: 0 }, pointInPixel)[0];
+                    const option = chart.getOption();
+                    if (option.xAxis && option.xAxis[0] && option.xAxis[0].data) {
+                        const date = option.xAxis[0].data[Math.round(xIndex)];
+                        if (date) openDialog(anchorType, { date: date });
+                    }
+                }
+            });
+            chart.on("click", (params) => {
+                if (params.name) {
+                    openDialog(anchorType, anchorType === "event" ? { event: params.name } : { [anchorType === "platform" ? "platform" : "date"]: params.name });
+                }
+            });
+        },
         renderTrendChart() {
             const el = document.getElementById("trend-chart");
             if (!el) return;
@@ -84,6 +109,7 @@ createApp({
                     { name: "互动烈度", type: "line", data: this.trendData.map(d => d.interaction_intensity), smooth: true },
                 ],
             });
+            this.bindChartClick(this.trendChart, "trend");
         },
         async loadPlatformDist() {
             const resp = await fetch(`/api/dashboard/platform-distribution/${this.currentVehicleId}`);
@@ -101,6 +127,7 @@ createApp({
                     data: this.platformDist.map(d => ({ name: d.platform, value: d.count })),
                 }],
             });
+            this.bindChartClick(this.platformChart, "platform");
         },
         async loadEventDist() {
             const resp = await fetch(`/api/dashboard/event-distribution/${this.currentVehicleId}`);
@@ -118,6 +145,7 @@ createApp({
                 yAxis: { type: "value" },
                 series: [{ type: "bar", data: data.map(d => d[1]) }],
             });
+            this.bindChartClick(this.eventChart, "event");
         },
         async loadAnomalies() {
             const end = new Date().toISOString().slice(0, 10);
@@ -147,6 +175,65 @@ createApp({
             await fetch(`/api/analysis/trigger/${this.currentVehicleId}`, { method: "POST" });
             this.loading = false;
             await this.onVehicleChange();
+        },
+        closeDialog() {
+            closeDialog();
+        },
+        renderGenerativeUI(content) {
+            return parseGenerativeUI(content);
+        },
+        async sendDialogMessage() {
+            if (!this.dialogAnchorType && !this.dialogConversationId) return;
+            const userMsg = this.dialogInput;
+            if (userMsg) {
+                this.dialogMessages.push({ id: Date.now(), role: "user", content: userMsg });
+            }
+            this.dialogInput = "";
+
+            const body = {
+                vehicle_id: this.currentVehicleId,
+                anchor_type: this.dialogAnchorType,
+                anchor_data: this.dialogAnchorData,
+                message: userMsg,
+            };
+            if (this.dialogConversationId) body.conversation_id = this.dialogConversationId;
+
+            const resp = await fetch("/api/dialog/anchor", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+            });
+
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder();
+            let assistantContent = "";
+            let buffer = "";
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split("\n");
+                buffer = lines.pop() || "";
+                for (const line of lines) {
+                    if (line.startsWith("data: ")) {
+                        try {
+                            const data = JSON.parse(line.slice(6));
+                            if (data.type === "text") assistantContent += data.content;
+                            if (data.type === "done") this.dialogConversationId = data.conversation_id;
+                        } catch (e) {}
+                    }
+                }
+            }
+
+            if (assistantContent) {
+                this.dialogMessages.push({ id: Date.now(), role: "assistant", content: assistantContent });
+            }
+
+            this.$nextTick(() => {
+                const container = this.$refs.dialogMessages;
+                if (container) container.scrollTop = container.scrollHeight;
+            });
         },
     },
 }).mount("#app");

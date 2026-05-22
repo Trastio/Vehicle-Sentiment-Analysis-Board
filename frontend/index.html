@@ -123,7 +123,27 @@
             </div>
         </div>
     </div>
+
+    <!-- Dialog Panel -->
+    <div v-if="dialogOpen" class="dialog-overlay" @click.self="closeDialog"></div>
+    <div :class="['dialog-panel', dialogOpen ? 'dialog-panel-open' : '']">
+        <div class="dialog-header">
+            <h3>{{ dialogAnchorType === 'trend' ? '趋势分析' : dialogAnchorType === 'platform' ? '平台分析' : dialogAnchorType === 'event' ? '事件分析' : '异常分析' }}</h3>
+            <button @click="closeDialog" class="dialog-close">&times;</button>
+        </div>
+        <div class="dialog-messages" ref="dialogMessages">
+            <div v-for="msg in dialogMessages" :key="msg.id" :class="['dialog-msg', 'dialog-msg-' + msg.role]">
+                <div v-if="msg.role === 'user'" class="dialog-msg-content">{{ msg.content }}</div>
+                <div v-else class="dialog-msg-content" v-html="renderGenerativeUI(msg.content)"></div>
+            </div>
+        </div>
+        <div class="dialog-input">
+            <input v-model="dialogInput" @keyup.enter="sendDialogMessage" placeholder="追问更多..." class="input dialog-input-field">
+            <button @click="sendDialogMessage" class="btn btn-primary dialog-send-btn">发送</button>
+        </div>
+    </div>
 </div>
+<script src="/static/js/dialog.js"></script>
 <script src="/static/js/app.js"></script>
 </body>
 </html>
