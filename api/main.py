@@ -7,6 +7,7 @@ from api.routes.collection import router as collection_router
 from api.routes.analysis import router as analysis_router
 from api.routes.dashboard import router as dashboard_router
 from api.routes.reports import router as reports_router
+from api.routes.dialog import router as dialog_router
 
 
 @asynccontextmanager
@@ -23,6 +24,7 @@ app.include_router(collection_router)
 app.include_router(analysis_router)
 app.include_router(dashboard_router)
 app.include_router(reports_router)
+app.include_router(dialog_router)
 
 app.mount("/static", StaticFiles(directory="frontend/static"), name="static")
 
