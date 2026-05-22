@@ -11,7 +11,7 @@ from models.database import Base
 
 class Vehicle(Base):
     __tablename__ = "vehicles"
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4())[:8])
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     name = Column(String, nullable=False)
     brand = Column(String, nullable=False)
     search_keywords = Column(Text)
@@ -24,7 +24,7 @@ class Vehicle(Base):
 
 class CollectionStatus(Base):
     __tablename__ = "collection_status"
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4())[:8])
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     vehicle_id = Column(String, nullable=False)
     source = Column(String, nullable=False)
     mode = Column(String, nullable=False)
@@ -37,7 +37,7 @@ class CollectionStatus(Base):
 
 class RawPost(Base):
     __tablename__ = "raw_posts"
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4())[:8])
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     vehicle_id = Column(String, nullable=False)
     source = Column(String, nullable=False)
     platform = Column(String)
@@ -55,7 +55,7 @@ class RawPost(Base):
 
 class AnalyzedPost(Base):
     __tablename__ = "analyzed_posts"
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4())[:8])
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     post_id = Column(String, nullable=False)
     vehicle_id = Column(String, nullable=False)
     sentiment = Column(String, nullable=False)
@@ -68,7 +68,7 @@ class AnalyzedPost(Base):
 
 class HeatMetric(Base):
     __tablename__ = "heat_metrics"
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4())[:8])
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     vehicle_id = Column(String, nullable=False)
     date = Column(Date, nullable=False)
     attention_index = Column(Float)
@@ -80,7 +80,7 @@ class HeatMetric(Base):
 
 class AnomalyEvent(Base):
     __tablename__ = "anomaly_events"
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4())[:8])
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     vehicle_id = Column(String, nullable=False)
     date = Column(Date, nullable=False)
     volume_change_rate = Column(Float)
@@ -96,7 +96,7 @@ class AnomalyEvent(Base):
 
 class Report(Base):
     __tablename__ = "reports"
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4())[:8])
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     vehicle_id = Column(String, nullable=False)
     type = Column(String, nullable=False)
     anomaly_event_id = Column(String)
@@ -109,7 +109,7 @@ class Report(Base):
 
 class DialogConversation(Base):
     __tablename__ = "dialog_conversations"
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4())[:8])
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     vehicle_id = Column(String, nullable=False)
     anchor_type = Column(String)
     anchor_data = Column(Text)
@@ -118,7 +118,7 @@ class DialogConversation(Base):
 
 class DialogMessage(Base):
     __tablename__ = "dialog_messages"
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4())[:8])
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     conversation_id = Column(String, nullable=False)
     role = Column(String, nullable=False)
     content = Column(Text, nullable=False)

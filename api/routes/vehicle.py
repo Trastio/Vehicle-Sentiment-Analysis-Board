@@ -26,7 +26,7 @@ def _to_resp(v: Vehicle) -> dict:
 @router.post("", response_model=VehicleResponse)
 async def create_vehicle(data: VehicleCreate, session: AsyncSession = Depends(get_session)):
     v = Vehicle(
-        id=str(uuid.uuid4())[:8], name=data.name, brand=data.brand,
+        id=str(uuid.uuid4()), name=data.name, brand=data.brand,
         search_keywords=json.dumps(data.search_keywords, ensure_ascii=False) if data.search_keywords else None,
         lifecycle_anchors=json.dumps(data.lifecycle_anchors, ensure_ascii=False) if data.lifecycle_anchors else None,
         competitor_ids=json.dumps(data.competitor_ids, ensure_ascii=False) if data.competitor_ids else None,

@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.schemas import CollectionStatus, RawPost, Vehicle
+from models.schemas import CollectionStatus, HeatMetric, RawPost, Vehicle
 from pipeline.collectors.gopup_collector import GopupCollector
 from pipeline.collectors.media_crawler import MediaCrawlerWrapper
 from pipeline.collectors.news_collector import NewsCollector
@@ -40,19 +40,38 @@ class CollectionScheduler:
             return "incremental", existing.last_collected_at
         return "initial", None
 
-    async def _run_collectors(self, keyword: str, start_date: str, end_date: str) -> list[dict]:
+    async def _run_collectors(self, keyword: str, start_date: str, end_date: str, vehicle_id: str) -> list[dict]:
         results = []
         news_posts = await self._news.search_all(keyword, start_date, end_date)
         results.extend(news_posts)
 
         if self._media.is_available():
-            for platform in ["xiaohongshu", "bilibili", "zhihu", "weibo"]:
+            for platform in ["xiaohongshu", "bilibili", "zhihu", "weibo", "douyin", "kuaishou", "tieba"]:
                 posts = await self._media.search(keyword, platform)
                 results.extend(posts)
 
-        await self._gopup.collect_baidu_index(keyword, start_date, end_date)
-        await self._gopup.collect_weibo_index(keyword, start_date, end_date)
+        baidu_index = await self._gopup.collect_baidu_index(keyword, start_date, end_date)
+        weibo_index = await self._gopup.collect_weibo_index(keyword, start_date, end_date)
+        await self._store_index_data(vehicle_id, baidu_index, weibo_index)
         return results
+
+    async def _store_index_data(self, vehicle_id: str, baidu_data: list[dict], weibo_data: list[dict]):
+        for item in baidu_data + weibo_data:
+            raw_date = item.get("date", "")
+            if not raw_date:
+                continue
+            try:
+                d = date.fromisoformat(raw_date)
+            except ValueError:
+                continue
+            self._session.add(HeatMetric(
+                id=str(uuid.uuid4()),
+                vehicle_id=vehicle_id,
+                date=d,
+                attention_index=float(item.get("index", 0)),
+            ))
+        if baidu_data or weibo_data:
+            await self._session.commit()
 
     async def _store_posts(self, vehicle_id: str, posts: list[dict]) -> int:
         seen_urls: set[str] = set()
@@ -80,7 +99,7 @@ class CollectionScheduler:
                     pass
 
             self._session.add(RawPost(
-                id=str(uuid.uuid4())[:8],
+                id=str(uuid.uuid4()),
                 vehicle_id=vehicle_id,
                 source=post.get("source", "unknown"),
                 platform=post.get("platform", ""),
@@ -99,16 +118,29 @@ class CollectionScheduler:
         return count
 
     async def _update_status(self, vehicle_id: str, mode: str, posts_count: int, error: str | None = None):
-        self._session.add(CollectionStatus(
-            id=str(uuid.uuid4())[:8],
-            vehicle_id=vehicle_id,
-            source="all",
-            mode=mode,
-            last_collected_at=datetime.now(),
-            posts_collected=posts_count,
-            status="completed" if not error else "error",
-            error_message=error,
-        ))
+        result = await self._session.execute(
+            select(CollectionStatus).where(
+                CollectionStatus.vehicle_id == vehicle_id, CollectionStatus.source == "all"
+            )
+        )
+        existing = result.scalars().first()
+        if existing:
+            existing.mode = mode
+            existing.last_collected_at = datetime.now()
+            existing.posts_collected = posts_count
+            existing.status = "completed" if not error else "error"
+            existing.error_message = error
+        else:
+            self._session.add(CollectionStatus(
+                id=str(uuid.uuid4()),
+                vehicle_id=vehicle_id,
+                source="all",
+                mode=mode,
+                last_collected_at=datetime.now(),
+                posts_collected=posts_count,
+                status="completed" if not error else "error",
+                error_message=error,
+            ))
         await self._session.commit()
 
     async def collect_vehicle(self, vehicle_id: str) -> dict:
@@ -124,7 +156,7 @@ class CollectionScheduler:
             all_posts: list[dict] = []
             for keyword in keywords:
                 for start, end in date_ranges:
-                    posts = await self._run_collectors(keyword, start, end)
+                    posts = await self._run_collectors(keyword, start, end, vehicle_id)
                     all_posts.extend(posts)
 
             stored = await self._store_posts(vehicle_id, all_posts)
