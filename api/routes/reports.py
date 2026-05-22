@@ -1,15 +1,28 @@
 import json
 import os
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import get_session
 from models.schemas import Report, Vehicle
+
+
+class BriefRequest(BaseModel):
+    vehicle_id: str
+    anomaly_date: str | None = None
+    event_type: str = "spike"
+
+
+class DeepReportRequest(BaseModel):
+    vehicle_id: str
+    start_date: str | None = None
+    end_date: str | None = None
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
@@ -96,14 +109,13 @@ async def generate_deep_report_content(vehicle_name: str, start_date: str, end_d
 
 
 @router.post("/brief")
-async def create_brief(body: dict, session: AsyncSession = Depends(get_session)):
-    vehicle_id = body.get("vehicle_id", "")
-    vehicle = await session.get(Vehicle, vehicle_id)
+async def create_brief(req: BriefRequest, session: AsyncSession = Depends(get_session)):
+    vehicle = await session.get(Vehicle, req.vehicle_id)
     if not vehicle:
         raise HTTPException(404, detail="Vehicle not found")
 
-    anomaly_date = body.get("anomaly_date", date.today().isoformat())
-    event_type = body.get("event_type", "spike")
+    anomaly_date = req.anomaly_date or date.today().isoformat()
+    event_type = req.event_type
 
     content = await generate_brief_content(
         vehicle_name=vehicle.name, event_type=event_type,
@@ -112,7 +124,7 @@ async def create_brief(body: dict, session: AsyncSession = Depends(get_session))
 
     report = Report(
         id=str(uuid.uuid4()),
-        vehicle_id=vehicle_id,
+        vehicle_id=req.vehicle_id,
         type="brief",
         title=f"{vehicle.name} 事件简报 {anomaly_date}",
         content=content,
@@ -123,21 +135,20 @@ async def create_brief(body: dict, session: AsyncSession = Depends(get_session))
     await session.commit()
 
     return {
-        "id": report.id, "vehicle_id": vehicle_id, "type": "brief",
+        "id": report.id, "vehicle_id": req.vehicle_id, "type": "brief",
         "title": report.title, "content": content,
         "time_range_start": anomaly_date, "time_range_end": anomaly_date,
     }
 
 
 @router.post("/deep-report")
-async def create_deep_report(body: dict, session: AsyncSession = Depends(get_session)):
-    vehicle_id = body.get("vehicle_id", "")
-    vehicle = await session.get(Vehicle, vehicle_id)
+async def create_deep_report(req: DeepReportRequest, session: AsyncSession = Depends(get_session)):
+    vehicle = await session.get(Vehicle, req.vehicle_id)
     if not vehicle:
         raise HTTPException(404, detail="Vehicle not found")
 
-    start_date = body.get("start_date", (date.today() - __import__("datetime").timedelta(days=30)).isoformat())
-    end_date = body.get("end_date", date.today().isoformat())
+    start_date = req.start_date or (date.today() - timedelta(days=30)).isoformat()
+    end_date = req.end_date or date.today().isoformat()
 
     content = await generate_deep_report_content(
         vehicle_name=vehicle.name, start_date=start_date, end_date=end_date,
@@ -146,7 +157,7 @@ async def create_deep_report(body: dict, session: AsyncSession = Depends(get_ses
 
     report = Report(
         id=str(uuid.uuid4()),
-        vehicle_id=vehicle_id,
+        vehicle_id=req.vehicle_id,
         type="deep_report",
         title=f"{vehicle.name} 深度报告 {start_date}~{end_date}",
         content=content,
@@ -157,7 +168,7 @@ async def create_deep_report(body: dict, session: AsyncSession = Depends(get_ses
     await session.commit()
 
     return {
-        "id": report.id, "vehicle_id": vehicle_id, "type": "deep_report",
+        "id": report.id, "vehicle_id": req.vehicle_id, "type": "deep_report",
         "title": report.title, "content": content,
         "time_range_start": start_date, "time_range_end": end_date,
     }

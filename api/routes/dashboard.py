@@ -1,5 +1,5 @@
 import json
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, func
@@ -11,11 +11,25 @@ from models.schemas import AnalyzedPost, AnomalyEvent, HeatMetric, RawPost, Repo
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 
-@router.get("/overview/{vehicle_id}")
-async def get_overview(vehicle_id: str, session: AsyncSession = Depends(get_session)):
+async def _get_vehicle_or_404(vehicle_id: str, session: AsyncSession) -> Vehicle:
     vehicle = await session.get(Vehicle, vehicle_id)
     if not vehicle:
         raise HTTPException(404, detail="Vehicle not found")
+    return vehicle
+
+
+def _safe_json_loads(text: str | None) -> dict | list:
+    if not text:
+        return {}
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
+@router.get("/overview/{vehicle_id}")
+async def get_overview(vehicle_id: str, session: AsyncSession = Depends(get_session)):
+    vehicle = await _get_vehicle_or_404(vehicle_id, session)
 
     total_result = await session.execute(
         select(func.count(RawPost.id)).where(RawPost.vehicle_id == vehicle_id)
@@ -34,7 +48,7 @@ async def get_overview(vehicle_id: str, session: AsyncSession = Depends(get_sess
 
     health_score = round((pos / total * 100) if total > 0 else 50, 1)
 
-    week_ago = (date.today() - __import__("datetime").timedelta(days=7)).isoformat()
+    week_ago = (date.today() - timedelta(days=7)).isoformat()
     week_result = await session.execute(
         select(func.count(RawPost.id)).where(
             RawPost.vehicle_id == vehicle_id,
@@ -43,9 +57,7 @@ async def get_overview(vehicle_id: str, session: AsyncSession = Depends(get_sess
     )
     week_total = week_result.scalar() or 0
 
-    lifecycle_anchors = {}
-    if vehicle.lifecycle_anchors:
-        lifecycle_anchors = json.loads(vehicle.lifecycle_anchors)
+    lifecycle_anchors = _safe_json_loads(vehicle.lifecycle_anchors)
 
     return {
         "total_posts": total,
@@ -62,7 +74,7 @@ async def get_trend(
     start: str = Query(...), end: str = Query(...),
     session: AsyncSession = Depends(get_session),
 ):
-    vehicle = await session.get(Vehicle, vehicle_id)
+    vehicle = await _get_vehicle_or_404(vehicle_id, session)
 
     result = await session.execute(
         select(HeatMetric).where(
@@ -84,20 +96,24 @@ async def get_trend(
     ]
 
     lifecycle_phases = []
-    if vehicle and vehicle.lifecycle_anchors:
-        anchors = json.loads(vehicle.lifecycle_anchors)
+    anchors = _safe_json_loads(vehicle.lifecycle_anchors)
+    if anchors:
         start_d = date.fromisoformat(start)
         end_d = date.fromisoformat(end)
         for phase_name, phase_date_str in anchors.items():
-            pd = date.fromisoformat(phase_date_str)
-            if start_d <= pd <= end_d:
-                lifecycle_phases.append({"type": phase_name, "date": phase_date_str})
+            try:
+                pd = date.fromisoformat(phase_date_str)
+                if start_d <= pd <= end_d:
+                    lifecycle_phases.append({"type": phase_name, "date": phase_date_str})
+            except (ValueError, TypeError):
+                pass
 
     return {"data": points, "lifecycle_phases": lifecycle_phases}
 
 
 @router.get("/platform-distribution/{vehicle_id}")
 async def get_platform_distribution(vehicle_id: str, session: AsyncSession = Depends(get_session)):
+    await _get_vehicle_or_404(vehicle_id, session)
     result = await session.execute(
         select(RawPost.platform, func.count(RawPost.id))
         .where(RawPost.vehicle_id == vehicle_id)
@@ -108,13 +124,15 @@ async def get_platform_distribution(vehicle_id: str, session: AsyncSession = Dep
 
 @router.get("/event-distribution/{vehicle_id}")
 async def get_event_distribution(vehicle_id: str, session: AsyncSession = Depends(get_session)):
+    await _get_vehicle_or_404(vehicle_id, session)
     result = await session.execute(
         select(AnalyzedPost.event_tags).where(AnalyzedPost.vehicle_id == vehicle_id)
     )
     tag_counts: dict[str, int] = {}
     for (tags_json,) in result.all():
-        if tags_json:
-            for tag in json.loads(tags_json):
+        tags = _safe_json_loads(tags_json)
+        if isinstance(tags, list):
+            for tag in tags:
                 tag_counts[tag] = tag_counts.get(tag, 0) + 1
     return sorted(tag_counts.items(), key=lambda x: -x[1])[:15]
 
@@ -125,6 +143,7 @@ async def get_anomaly_timeline(
     start: str = Query(...), end: str = Query(...),
     session: AsyncSession = Depends(get_session),
 ):
+    await _get_vehicle_or_404(vehicle_id, session)
     result = await session.execute(
         select(AnomalyEvent).where(
             AnomalyEvent.vehicle_id == vehicle_id,
@@ -151,6 +170,7 @@ async def get_posts(
     sentiment: str = Query(None), platform: str = Query(None),
     session: AsyncSession = Depends(get_session),
 ):
+    await _get_vehicle_or_404(vehicle_id, session)
     query = select(RawPost).where(RawPost.vehicle_id == vehicle_id)
     if platform:
         query = query.where(RawPost.platform == platform)
@@ -191,6 +211,7 @@ async def get_posts(
 
 @router.get("/reports/{vehicle_id}")
 async def get_reports(vehicle_id: str, session: AsyncSession = Depends(get_session)):
+    await _get_vehicle_or_404(vehicle_id, session)
     result = await session.execute(
         select(Report).where(Report.vehicle_id == vehicle_id)
         .order_by(Report.created_at.desc())
