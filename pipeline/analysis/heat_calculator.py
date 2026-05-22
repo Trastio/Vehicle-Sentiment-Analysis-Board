@@ -1,5 +1,5 @@
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,8 +12,8 @@ class HeatMetricCalculator:
         self._session = session
 
     async def calculate_daily(self, vehicle_id: str, target_date: date) -> HeatMetric | None:
-        start = target_date
-        end = target_date + timedelta(days=1)
+        start = datetime.combine(target_date, datetime.min.time())
+        end = datetime.combine(target_date + timedelta(days=1), datetime.min.time())
 
         result = await self._session.execute(
             select(
@@ -23,8 +23,8 @@ class HeatMetricCalculator:
                 func.coalesce(func.sum(RawPost.shares), 0),
             ).where(
                 RawPost.vehicle_id == vehicle_id,
-                RawPost.published_at >= start.isoformat(),
-                RawPost.published_at < end.isoformat(),
+                RawPost.published_at >= start,
+                RawPost.published_at < end,
             )
         )
         row = result.one()
@@ -33,24 +33,22 @@ class HeatMetricCalculator:
         if total == 0:
             return None
 
-        # Attention index: posts from index sources (gopup)
         idx_result = await self._session.execute(
             select(func.count(RawPost.id)).where(
                 RawPost.vehicle_id == vehicle_id,
                 RawPost.source == "gopup_index",
-                RawPost.published_at >= start.isoformat(),
-                RawPost.published_at < end.isoformat(),
+                RawPost.published_at >= start,
+                RawPost.published_at < end,
             )
         )
         attention_count = idx_result.scalar() or 0
 
-        # Media volume: posts from news sources
         media_result = await self._session.execute(
             select(func.count(RawPost.id)).where(
                 RawPost.vehicle_id == vehicle_id,
                 RawPost.platform == "news",
-                RawPost.published_at >= start.isoformat(),
-                RawPost.published_at < end.isoformat(),
+                RawPost.published_at >= start,
+                RawPost.published_at < end,
             )
         )
         media_count = media_result.scalar() or 0
