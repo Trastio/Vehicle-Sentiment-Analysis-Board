@@ -43,11 +43,16 @@ async def get_overview(vehicle_id: str, session: AsyncSession = Depends(get_sess
     )
     week_total = week_result.scalar() or 0
 
+    lifecycle_anchors = {}
+    if vehicle.lifecycle_anchors:
+        lifecycle_anchors = json.loads(vehicle.lifecycle_anchors)
+
     return {
         "total_posts": total,
         "positive": pos, "negative": neg, "neutral": neu,
         "week_change": week_total,
         "health_score": health_score,
+        "lifecycle_anchors": lifecycle_anchors,
     }
 
 
@@ -57,6 +62,8 @@ async def get_trend(
     start: str = Query(...), end: str = Query(...),
     session: AsyncSession = Depends(get_session),
 ):
+    vehicle = await session.get(Vehicle, vehicle_id)
+
     result = await session.execute(
         select(HeatMetric).where(
             HeatMetric.vehicle_id == vehicle_id,
@@ -65,7 +72,7 @@ async def get_trend(
         ).order_by(HeatMetric.date)
     )
     metrics = result.scalars().all()
-    return [
+    points = [
         {
             "date": m.date.isoformat(),
             "attention_index": m.attention_index,
@@ -75,6 +82,18 @@ async def get_trend(
         }
         for m in metrics
     ]
+
+    lifecycle_phases = []
+    if vehicle and vehicle.lifecycle_anchors:
+        anchors = json.loads(vehicle.lifecycle_anchors)
+        start_d = date.fromisoformat(start)
+        end_d = date.fromisoformat(end)
+        for phase_name, phase_date_str in anchors.items():
+            pd = date.fromisoformat(phase_date_str)
+            if start_d <= pd <= end_d:
+                lifecycle_phases.append({"type": phase_name, "date": phase_date_str})
+
+    return {"data": points, "lifecycle_phases": lifecycle_phases}
 
 
 @router.get("/platform-distribution/{vehicle_id}")

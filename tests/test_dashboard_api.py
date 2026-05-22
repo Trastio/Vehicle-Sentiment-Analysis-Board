@@ -98,7 +98,8 @@ async def test_trend(client):
     resp = await client.get(f"/api/dashboard/trend/{vid}?start=2026-05-18&end=2026-05-22")
     assert resp.status_code == 200
     data = resp.json()
-    assert isinstance(data, list)
+    assert "data" in data
+    assert isinstance(data["data"], list)
 
 
 async def test_platform_distribution(client):
