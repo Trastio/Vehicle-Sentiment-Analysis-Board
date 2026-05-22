@@ -1,23 +1,67 @@
-* {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fa; color: #333; }
+#app { max-width: 1400px; margin: 0 auto; padding: 20px; }
 
-body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #f5f7fa;
-    color: #333;
-}
+.header { display: flex; justify-content: space-between; align-items: center; padding: 16px 0; border-bottom: 1px solid #e0e0e0; margin-bottom: 24px; }
+.header h1 { font-size: 24px; font-weight: 600; }
+.header-actions { display: flex; gap: 8px; align-items: center; }
+.vehicle-select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; min-width: 200px; }
 
-#app {
-    max-width: 1400px;
-    margin: 0 auto;
-    padding: 20px;
-}
+.btn { padding: 8px 16px; border: 1px solid #ddd; border-radius: 6px; background: #fff; cursor: pointer; font-size: 14px; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-primary { background: #1677ff; color: #fff; border-color: #1677ff; }
+.btn-primary:hover { background: #4096ff; }
 
-h1 {
-    font-size: 24px;
-    font-weight: 600;
-    margin-bottom: 16px;
+.section { background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.section h2 { font-size: 18px; margin-bottom: 16px; color: #1a1a1a; }
+.section h3 { font-size: 15px; margin-bottom: 12px; color: #666; }
+
+.cards { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+.card { padding: 16px; border-radius: 8px; background: #f9fafb; text-align: center; }
+.card-value { font-size: 28px; font-weight: 700; color: #333; }
+.card-label { font-size: 13px; color: #888; margin-top: 4px; }
+.card-positive .card-value { color: #52c41a; }
+.card-negative .card-value { color: #ff4d4f; }
+.card-neutral .card-value { color: #faad14; }
+
+.chart-container { height: 350px; }
+.chart-sm { height: 280px; }
+
+.analysis-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+.analysis-col { min-width: 0; }
+
+.anomaly-list { max-height: 260px; overflow-y: auto; }
+.anomaly-item { display: flex; gap: 8px; padding: 8px 0; border-bottom: 1px solid #f0f0f0; font-size: 13px; }
+.anomaly-item.spike .anomaly-type { color: #ff4d4f; }
+.anomaly-item.drop .anomaly-type { color: #1677ff; }
+.anomaly-date { color: #999; min-width: 80px; }
+.anomaly-rate { color: #666; }
+.empty { color: #bbb; text-align: center; padding: 20px; }
+
+.table-filters { display: flex; gap: 8px; margin-bottom: 12px; }
+.table-filters select { padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; }
+
+.posts-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.posts-table th { text-align: left; padding: 10px 8px; border-bottom: 2px solid #e0e0e0; color: #666; font-weight: 500; }
+.posts-table td { padding: 10px 8px; border-bottom: 1px solid #f0f0f0; }
+.posts-table tr:hover { background: #fafafa; }
+
+.pagination { display: flex; justify-content: center; align-items: center; gap: 16px; margin-top: 16px; }
+.pagination button { padding: 6px 12px; border: 1px solid #ddd; border-radius: 4px; background: #fff; cursor: pointer; }
+.pagination button:disabled { opacity: 0.4; }
+.pagination span { font-size: 13px; color: #666; }
+
+.report-item { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f0f0f0; font-size: 13px; }
+.report-type { background: #e6f4ff; color: #1677ff; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+.report-date { color: #999; margin-left: auto; }
+
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; z-index: 100; }
+.modal { background: #fff; border-radius: 8px; padding: 24px; width: 400px; }
+.modal h3 { margin-bottom: 16px; }
+.modal .input { display: block; width: 100%; padding: 8px 12px; margin-bottom: 12px; border: 1px solid #ddd; border-radius: 6px; }
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+
+@media (max-width: 900px) {
+    .cards { grid-template-columns: repeat(3, 1fr); }
+    .analysis-row { grid-template-columns: 1fr; }
 }

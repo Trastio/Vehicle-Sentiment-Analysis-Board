@@ -9,10 +9,121 @@
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
-    <div id="app">
+<div id="app">
+    <header class="header">
         <h1>车型舆情监控</h1>
-        <p>{{ message }}</p>
+        <div class="header-actions">
+            <select v-model="currentVehicleId" @change="onVehicleChange" class="vehicle-select">
+                <option value="">选择车型</option>
+                <option v-for="v in vehicles" :key="v.id" :value="v.id">{{ v.name }} ({{ v.brand }})</option>
+            </select>
+            <button @click="showAddModal = true" class="btn btn-primary">添加车型</button>
+            <button @click="triggerCollection" :disabled="!currentVehicleId || loading" class="btn">采集</button>
+            <button @click="triggerAnalysis" :disabled="!currentVehicleId || loading" class="btn">分析</button>
+        </div>
+    </header>
+
+    <!-- 概览区 Overview Cards -->
+    <section v-if="currentVehicleId" class="section overview">
+        <h2>概览</h2>
+        <div class="cards">
+            <div class="card"><div class="card-value">{{ overview.total_posts || 0 }}</div><div class="card-label">舆情总量</div></div>
+            <div class="card card-positive"><div class="card-value">{{ overview.positive || 0 }}</div><div class="card-label">正面</div></div>
+            <div class="card card-negative"><div class="card-value">{{ overview.negative || 0 }}</div><div class="card-label">负面</div></div>
+            <div class="card card-neutral"><div class="card-value">{{ overview.neutral || 0 }}</div><div class="card-label">中性</div></div>
+            <div class="card"><div class="card-value">{{ overview.health_score || '-' }}</div><div class="card-label">健康度</div></div>
+        </div>
+    </section>
+
+    <!-- 趋势区 Trend Chart -->
+    <section v-if="currentVehicleId" class="section">
+        <h2>热度趋势</h2>
+        <div id="trend-chart" class="chart-container"></div>
+    </section>
+
+    <!-- 分析区 Analysis -->
+    <section v-if="currentVehicleId" class="section analysis-row">
+        <div class="analysis-col">
+            <h3>平台声量分布</h3>
+            <div id="platform-chart" class="chart-sm"></div>
+        </div>
+        <div class="analysis-col">
+            <h3>事件分布</h3>
+            <div id="event-chart" class="chart-sm"></div>
+        </div>
+        <div class="analysis-col">
+            <h3>异常时间线</h3>
+            <div class="anomaly-list">
+                <div v-for="a in anomalies" :key="a.id" class="anomaly-item" :class="a.event_type">
+                    <span class="anomaly-date">{{ a.date }}</span>
+                    <span class="anomaly-type">{{ a.event_type === 'spike' ? '声量激增' : '声量骤降' }}</span>
+                    <span class="anomaly-rate">{{ (a.volume_change_rate * 100).toFixed(0) }}%</span>
+                </div>
+                <div v-if="!anomalies.length" class="empty">暂无异常</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 帖子详情 Posts Table -->
+    <section v-if="currentVehicleId" class="section">
+        <h2>帖子详情</h2>
+        <div class="table-filters">
+            <select v-model="postsFilter.sentiment" @change="loadPosts(1)">
+                <option value="">全部情感</option>
+                <option value="positive">正面</option>
+                <option value="negative">负面</option>
+                <option value="neutral">中性</option>
+            </select>
+            <select v-model="postsFilter.platform" @change="loadPosts(1)">
+                <option value="">全部平台</option>
+                <option value="news">新闻</option>
+                <option value="xhs">小红书</option>
+                <option value="bili">B站</option>
+            </select>
+        </div>
+        <table class="posts-table">
+            <thead><tr><th>标题</th><th>平台</th><th>日期</th><th>互动</th></tr></thead>
+            <tbody>
+                <tr v-for="p in posts.items" :key="p.id">
+                    <td>{{ p.title || p.content?.substring(0, 50) }}</td>
+                    <td>{{ p.platform }}</td>
+                    <td>{{ p.published_at?.substring(0, 10) }}</td>
+                    <td>{{ (p.likes || 0) + (p.comments || 0) + (p.shares || 0) }}</td>
+                </tr>
+            </tbody>
+        </table>
+        <div class="pagination">
+            <button :disabled="posts.page <= 1" @click="loadPosts(posts.page - 1)">上一页</button>
+            <span>第 {{ posts.page }} 页</span>
+            <button :disabled="posts.page * posts.size >= posts.total" @click="loadPosts(posts.page + 1)">下一页</button>
+        </div>
+    </section>
+
+    <!-- 报告区 Reports -->
+    <section v-if="currentVehicleId" class="section">
+        <h2>历史报告</h2>
+        <div v-for="r in reports" :key="r.id" class="report-item">
+            <span class="report-type">{{ r.type }}</span>
+            <span class="report-title">{{ r.title }}</span>
+            <span class="report-date">{{ r.created_at?.substring(0, 10) }}</span>
+        </div>
+        <div v-if="!reports.length" class="empty">暂无报告</div>
+    </section>
+
+    <!-- 添加车型 Modal -->
+    <div v-if="showAddModal" class="modal-overlay" @click.self="showAddModal = false">
+        <div class="modal">
+            <h3>添加车型</h3>
+            <input v-model="newVehicle.name" placeholder="车型名称" class="input">
+            <input v-model="newVehicle.brand" placeholder="品牌" class="input">
+            <input v-model="newVehicle.search_keywords" placeholder="搜索关键词(逗号分隔)" class="input">
+            <div class="modal-actions">
+                <button @click="addVehicle" class="btn btn-primary">添加</button>
+                <button @click="showAddModal = false" class="btn">取消</button>
+            </div>
+        </div>
     </div>
-    <script src="/static/js/app.js"></script>
+</div>
+<script src="/static/js/app.js"></script>
 </body>
 </html>
