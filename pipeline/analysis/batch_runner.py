@@ -8,12 +8,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.schemas import AnalyzedPost, RawPost, Vehicle
 from pipeline.analysis.analyzer import AnalysisPipeline
 
+MAX_POSTS_PER_RUN = 200
+
 
 class BatchAnalysisRunner:
-    def __init__(self, session: AsyncSession, batch_size: int = 50):
+    def __init__(self, session: AsyncSession, batch_size: int = 50, max_posts: int = MAX_POSTS_PER_RUN):
         self._session = session
         self._pipeline = AnalysisPipeline()
         self._batch_size = batch_size
+        self._max_posts = max_posts
 
     async def _analyze_single_post(self, post: RawPost) -> dict:
         return await self._pipeline.analyze_single(post.content)
@@ -24,7 +27,7 @@ class BatchAnalysisRunner:
             return {"vehicle_id": vehicle_id, "analyzed": 0, "error": "Vehicle not found"}
 
         analyzed = 0
-        while True:
+        while analyzed < self._max_posts:
             result = await self._session.execute(
                 select(RawPost).where(
                     RawPost.vehicle_id == vehicle_id,
@@ -37,6 +40,7 @@ class BatchAnalysisRunner:
 
             for post in batch:
                 analysis = await self._analyze_single_post(post)
+                confidence = analysis.get("confidence", 0.0)
                 self._session.add(AnalyzedPost(
                     id=str(uuid.uuid4()),
                     post_id=post.id,
@@ -44,8 +48,8 @@ class BatchAnalysisRunner:
                     sentiment=analysis["sentiment"],
                     event_tags=json.dumps(analysis.get("event_tags", []), ensure_ascii=False),
                     opinion_tags=json.dumps(analysis.get("opinion_tags", []), ensure_ascii=False),
-                    confidence=analysis.get("confidence", 0.0),
-                    model_used="deepseek-v4-flash",
+                    confidence=max(0.0, min(1.0, confidence)),
+                    model_used=self._pipeline._model or "deepseek-v4-flash",
                 ))
                 post.analysis_status = "analyzed"
                 analyzed += 1
@@ -58,7 +62,7 @@ class BatchAnalysisRunner:
         result = await self._session.execute(
             select(RawPost.vehicle_id).where(
                 RawPost.analysis_status == "pending"
-            ).distinct()
+            ).distinct().limit(10)
         )
         vehicle_ids = [row[0] for row in result.all()]
 
