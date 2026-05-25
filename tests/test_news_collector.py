@@ -11,6 +11,7 @@ async def test_search_all_no_keys():
         c = NewsCollector()
         c._tavily_key = ""
         c._bocha_key = ""
+        c._anspire_key = ""
         assert await c.search_all("海豹", "2026-01-01", "2026-05-01") == []
 
 
@@ -20,6 +21,7 @@ async def test_search_all_dedup_by_url():
         c = NewsCollector()
         c._tavily_key = "key"
         c._bocha_key = ""
+        c._anspire_key = ""
         with patch.object(c, "search_tavily", return_value=[
             {"title": "A", "url": "http://x.com/1", "published_at": "2026-05-01", "source": "t", "platform": "news"},
         ]):
@@ -74,6 +76,7 @@ async def test_search_all_sorted_by_date():
         c = NewsCollector()
         c._tavily_key = ""
         c._bocha_key = ""
+        c._anspire_key = ""
         with patch.object(c, "search_tavily", return_value=[
             {"title": "A", "url": "1", "published_at": "2026-05-01", "source": "t", "platform": "news"},
             {"title": "B", "url": "2", "published_at": "2026-05-03", "source": "t", "platform": "news"},
@@ -91,3 +94,68 @@ def test_dedup_key_by_url():
 def test_dedup_key_by_title_fallback():
     from pipeline.collectors.news_collector import _dedup_key
     assert _dedup_key({"title": "同标题", "url": ""}) == _dedup_key({"title": "同标题", "url": ""})
+
+
+async def test_search_anspire_no_key():
+    from pipeline.collectors.news_collector import NewsCollector
+    with patch.object(NewsCollector, "__init__", lambda self: None):
+        c = NewsCollector()
+        c._anspire_key = ""
+        assert await c.search_anspire("海豹", "2026-01-01", "2026-05-01") == []
+
+
+async def test_search_anspire_success():
+    from pipeline.collectors.news_collector import NewsCollector
+    with patch.object(NewsCollector, "__init__", lambda self: None):
+        c = NewsCollector()
+        c._anspire_key = "key"
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"results": [
+            {"title": "海豹新闻", "content": "内容", "url": "http://x.com",
+             "published_at": "2026-05-01", "author": "test"},
+        ]}
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            result = await c.search_anspire("海豹", "2026-01-01", "2026-05-01")
+    assert len(result) == 1
+    assert result[0]["source"] == "anspire"
+    assert result[0]["platform"] == "news"
+    assert result[0]["title"] == "海豹新闻"
+
+
+async def test_search_anspire_api_error():
+    from pipeline.collectors.news_collector import NewsCollector
+    with patch.object(NewsCollector, "__init__", lambda self: None):
+        c = NewsCollector()
+        c._anspire_key = "key"
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=httpx.HTTPStatusError(
+            "err", request=MagicMock(), response=MagicMock(status_code=500)))
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            result = await c.search_anspire("海豹", "2026-01-01", "2026-05-01")
+    assert result == []
+
+
+async def test_search_all_includes_anspire():
+    from pipeline.collectors.news_collector import NewsCollector
+    with patch.object(NewsCollector, "__init__", lambda self: None):
+        c = NewsCollector()
+        c._tavily_key = ""
+        c._bocha_key = ""
+        c._anspire_key = "key"
+        with patch.object(c, "search_tavily", return_value=[]):
+            with patch.object(c, "search_bocha", return_value=[]):
+                with patch.object(c, "search_anspire", return_value=[
+                    {"title": "A", "url": "http://a.com", "published_at": "2026-05-01",
+                     "source": "anspire", "platform": "news"},
+                ]):
+                    result = await c.search_all("海豹", "2026-01-01", "2026-05-01")
+    assert len(result) == 1
+    assert result[0]["source"] == "anspire"

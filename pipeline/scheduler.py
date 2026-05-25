@@ -1,4 +1,5 @@
 import json
+import logging
 import uuid
 from datetime import date, datetime, timedelta
 
@@ -9,6 +10,8 @@ from models.schemas import CollectionStatus, HeatMetric, RawPost, Vehicle
 from pipeline.collectors.gopup_collector import GopupCollector
 from pipeline.collectors.media_crawler import MediaCrawlerWrapper
 from pipeline.collectors.news_collector import NewsCollector
+
+logger = logging.getLogger(__name__)
 
 
 class CollectionScheduler:
@@ -41,6 +44,7 @@ class CollectionScheduler:
         return "initial", None
 
     async def _run_collectors(self, keyword: str, start_date: str, end_date: str, vehicle_id: str) -> list[dict]:
+        logger.info("Collecting keyword='%s', range=%s to %s", keyword, start_date, end_date)
         results = []
         news_posts = await self._news.search_all(keyword, start_date, end_date)
         results.extend(news_posts)
@@ -52,25 +56,31 @@ class CollectionScheduler:
 
         baidu_index = await self._gopup.collect_baidu_index(keyword, start_date, end_date)
         weibo_index = await self._gopup.collect_weibo_index(keyword, start_date, end_date)
-        await self._store_index_data(vehicle_id, baidu_index, weibo_index)
+        toutiao_index = await self._gopup.collect_toutiao_index(keyword, start_date, end_date)
+        google_index = await self._gopup.collect_google_index(keyword, start_date, end_date)
+        await self._store_index_data(vehicle_id, baidu_index, weibo_index, toutiao_index, google_index)
+
+        index_total = len(baidu_index) + len(weibo_index) + len(toutiao_index) + len(google_index)
+        logger.info("Collection done for '%s': %d posts, %d index points", keyword, len(results), index_total)
         return results
 
-    async def _store_index_data(self, vehicle_id: str, baidu_data: list[dict], weibo_data: list[dict]):
-        for item in baidu_data + weibo_data:
-            raw_date = item.get("date", "")
-            if not raw_date:
-                continue
-            try:
-                d = date.fromisoformat(raw_date)
-            except ValueError:
-                continue
-            self._session.add(HeatMetric(
-                id=str(uuid.uuid4()),
-                vehicle_id=vehicle_id,
-                date=d,
-                attention_index=float(item.get("index", 0)),
-            ))
-        if baidu_data or weibo_data:
+    async def _store_index_data(self, vehicle_id: str, *data_sets: list[dict]):
+        for data_set in data_sets:
+            for item in data_set:
+                raw_date = item.get("date", "")
+                if not raw_date:
+                    continue
+                try:
+                    d = date.fromisoformat(raw_date)
+                except ValueError:
+                    continue
+                self._session.add(HeatMetric(
+                    id=str(uuid.uuid4()),
+                    vehicle_id=vehicle_id,
+                    date=d,
+                    attention_index=float(item.get("index", 0)),
+                ))
+        if any(data_sets):
             await self._session.commit()
 
     async def _store_posts(self, vehicle_id: str, posts: list[dict]) -> int:
@@ -151,6 +161,7 @@ class CollectionScheduler:
         try:
             mode, last_collected = await self._determine_mode(vehicle_id)
             date_ranges = self._get_date_ranges(mode, last_collected)
+            logger.info("开始采集 vehicle=%s mode=%s ranges=%d", vehicle.name, mode, len(date_ranges))
             keywords = json.loads(vehicle.search_keywords) if vehicle.search_keywords else [vehicle.name]
 
             all_posts: list[dict] = []
@@ -161,9 +172,11 @@ class CollectionScheduler:
 
             stored = await self._store_posts(vehicle_id, all_posts)
             await self._update_status(vehicle_id, mode, stored)
+            logger.info("采集完成: %d posts stored for %s", stored, vehicle.name)
             return {"vehicle_id": vehicle_id, "mode": mode, "posts_collected": stored, "status": "completed"}
         except Exception as e:
             await self._session.rollback()
+            logger.warning("采集失败 vehicle=%s: %s", vehicle_id, e)
             try:
                 await self._update_status(vehicle_id, "unknown", 0, str(e))
             except Exception:
