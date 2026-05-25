@@ -132,26 +132,26 @@ class TestCollectVehicle:
 
 class TestStoreIndexData:
     @pytest.mark.asyncio
-    async def test_stores_multiple_index_sources(self, db, vehicle):
+    async def test_stores_baidu_index(self, db, vehicle):
         from pipeline.scheduler import CollectionScheduler
         from models.schemas import HeatMetric
         s = CollectionScheduler(db)
-        baidu_data = [{"date": "2026-05-01", "keyword": "海豹", "index": 100, "source": "baidu"}]
-        weibo_data = [{"date": "2026-05-01", "keyword": "海豹", "index": 80, "source": "weibo"}]
-        toutiao_data = [{"date": "2026-05-02", "keyword": "海豹", "index": 60, "source": "toutiao"}]
-        google_data = [{"date": "2026-05-02", "keyword": "海豹", "index": 40, "source": "google"}]
-        await s._store_index_data(vehicle.id, baidu_data, weibo_data, toutiao_data, google_data)
+        baidu_data = [
+            {"date": "2026-05-01", "keyword": "海豹", "index": 100, "source": "baidu"},
+            {"date": "2026-05-02", "keyword": "海豹", "index": 80, "source": "baidu"},
+        ]
+        await s._store_index_data(vehicle.id, baidu_data)
         metrics = (await db.execute(
             select(HeatMetric).where(HeatMetric.vehicle_id == vehicle.id)
         )).scalars().all()
-        assert len(metrics) == 4
+        assert len(metrics) == 2
 
     @pytest.mark.asyncio
     async def test_store_index_data_empty(self, db, vehicle):
         from pipeline.scheduler import CollectionScheduler
         from models.schemas import HeatMetric
         s = CollectionScheduler(db)
-        await s._store_index_data(vehicle.id, [], [])
+        await s._store_index_data(vehicle.id, [])
         metrics = (await db.execute(
             select(HeatMetric).where(HeatMetric.vehicle_id == vehicle.id)
         )).scalars().all()

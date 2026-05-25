@@ -1,7 +1,10 @@
 import json
 import os
+import logging
 from pathlib import Path
 from datetime import datetime, timedelta
+
+logger = logging.getLogger(__name__)
 
 COOKIE_CACHE_DIR = "data/cookies"
 SECRETS_PATH = ".secrets"
@@ -76,33 +79,51 @@ class CookieManager:
         try:
             from playwright.sync_api import sync_playwright
             with sync_playwright() as p:
-                browser = p.chromium.launch(headless=False)
-                context = browser.new_context()
+                browser = p.chromium.launch(headless=True)
+                context = browser.new_context(viewport={"width": 1280, "height": 800})
                 page = context.new_page()
-                page.goto("https://passport.baidu.com/v2/?login", timeout=30000)
-                page.wait_for_load_state("networkidle", timeout=15000)
+                page.goto("https://passport.baidu.com/v2/?login", timeout=60000)
+                page.wait_for_timeout(5000)
+
+                loc = page.locator('text="用户名登录"')
+                if loc.count() > 0 and loc.first.is_visible():
+                    loc.first.click()
+                    page.wait_for_timeout(1000)
+
                 try:
-                    tab = page.locator('text="用户名登录"')
-                    if tab.is_visible():
-                        tab.click()
-                        page.wait_for_timeout(500)
+                    uname = page.locator("#TANGRAM__PSP_3__userName")
+                    if not uname.is_visible():
+                        browser.close()
+                        return None
+                    uname.fill(username)
+                    page.wait_for_timeout(300)
+                    page.locator("#TANGRAM__PSP_3__password").fill(password)
+                    page.wait_for_timeout(300)
+                    page.locator("#TANGRAM__PSP_3__submit").click()
                 except Exception:
-                    pass
-                page.locator('input[name="userName"]').fill(username)
-                page.wait_for_timeout(300)
-                page.locator('input[name="password"]').fill(password)
-                page.wait_for_timeout(300)
-                btn = page.locator('input[type="submit"], button:has-text("登录")')
-                if btn.is_visible():
-                    btn.click()
-                page.wait_for_url("**/www.baidu.com**", timeout=30000)
-                page.wait_for_load_state("networkidle", timeout=10000)
+                    browser.close()
+                    return None
+
+                for _ in range(180):
+                    page.wait_for_timeout(1000)
+                    if "passport.baidu.com/v2/?login" not in page.url:
+                        break
+
+                page.goto("https://www.baidu.com", timeout=30000)
+                page.wait_for_timeout(3000)
+
                 cookies = context.cookies()
                 cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in cookies)
+                if not cookie_str:
+                    browser.close()
+                    return None
+
                 with open(self._cache_path("baidu"), "w") as f:
                     json.dump({"cookie_str": cookie_str}, f)
                 self._record_login("baidu")
+                logger.info("Baidu cookie obtained, length=%d", len(cookie_str))
                 browser.close()
                 return cookie_str
-        except Exception:
+        except Exception as e:
+            logger.warning("Baidu login failed: %s", e)
             return None

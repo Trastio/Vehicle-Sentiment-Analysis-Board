@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import sys
-from typing import Callable
 
 try:
     import gopup as gp
@@ -19,52 +18,39 @@ logger = logging.getLogger(__name__)
 class GopupCollector:
     def __init__(self):
         self._cookie_mgr = CookieManager()
+        self._cookie: str | None = None
 
-    def _ensure_cookie(self):
-        cookie = self._cookie_mgr.get_baidu_cookie()
-        if cookie:
-            try:
-                gp.cookie_baidu(cookie_str=cookie)
-            except Exception:
-                pass
+    def _get_cookie(self) -> str | None:
+        if self._cookie:
+            return self._cookie
+        self._cookie = self._cookie_mgr.get_baidu_cookie()
+        return self._cookie
 
-    def _collect_index_sync(self, index_func: Callable, source_name: str,
-                            keyword: str, start_date: str, end_date: str) -> list[dict]:
+    def _collect_baidu_sync(self, keyword: str, start_date: str, end_date: str) -> list[dict]:
+        cookie = self._get_cookie()
+        if not cookie:
+            logger.warning("No Baidu cookie available, skipping baidu_index")
+            return []
         try:
-            logger.debug("%s_index request: keyword=%s, start=%s, end=%s",
-                         source_name, keyword, start_date, end_date)
-            df = index_func(word=keyword, start_date=start_date, end_date=end_date)
+            logger.debug("baidu_index request: keyword=%s, start=%s, end=%s", keyword, start_date, end_date)
+            df = gp.baidu_search_index(word=keyword, start_date=start_date, end_date=end_date, cookie=cookie)
             if df is None or df.empty:
-                logger.info("%s_index returned 0 data points for '%s'", source_name, keyword)
+                logger.info("baidu_index returned 0 data points for '%s'", keyword)
                 return []
-            index_col = f"{source_name}_index"
-            results = [{"date": str(row.get("date", "")), "keyword": keyword,
-                        "index": int(row.get(index_col, 0)), "source": source_name}
-                       for _, row in df.iterrows()]
-            logger.info("%s_index collected %d data points for '%s'",
-                        source_name, len(results), keyword)
+            results = []
+            for idx, row in df.iterrows():
+                results.append({
+                    "date": str(idx.date()) if hasattr(idx, "date") else str(idx).split()[0],
+                    "keyword": keyword,
+                    "index": int(row.get("index", 0)),
+                    "source": "baidu",
+                })
+            logger.info("baidu_index collected %d data points for '%s'", len(results), keyword)
             return results
         except Exception as e:
-            logger.warning("%s_index failed for '%s': %s", source_name, keyword, e)
+            logger.warning("baidu_index failed for '%s': %s", keyword, e)
+            self._cookie = None
             return []
 
     async def collect_baidu_index(self, keyword: str, start_date: str, end_date: str) -> list[dict]:
-        self._ensure_cookie()
-        return await asyncio.to_thread(
-            self._collect_index_sync, gp.baidu_index, "baidu", keyword, start_date, end_date
-        )
-
-    async def collect_weibo_index(self, keyword: str, start_date: str, end_date: str) -> list[dict]:
-        return await asyncio.to_thread(
-            self._collect_index_sync, gp.weibo_index, "weibo", keyword, start_date, end_date
-        )
-
-    async def collect_toutiao_index(self, keyword: str, start_date: str, end_date: str) -> list[dict]:
-        return await asyncio.to_thread(
-            self._collect_index_sync, gp.toutiao_index, "toutiao", keyword, start_date, end_date
-        )
-
-    async def collect_google_index(self, keyword: str, start_date: str, end_date: str) -> list[dict]:
-        return await asyncio.to_thread(
-            self._collect_index_sync, gp.google_index, "google", keyword, start_date, end_date
-        )
+        return await asyncio.to_thread(self._collect_baidu_sync, keyword, start_date, end_date)

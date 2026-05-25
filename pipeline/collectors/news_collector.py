@@ -82,7 +82,7 @@ class NewsCollector:
         try:
             logger.debug("Bocha request: keyword=%s, start=%s, end=%s", keyword, start_date, end_date)
             async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.post("https://api.bocha.io/v1/web-search",
+                resp = await client.post("https://api.bochaai.com/v1/web-search",
                     headers={"Authorization": f"Bearer {self._bocha_key}"},
                     json={"query": keyword, "freshness": f"{start_date}_{end_date}",
                           "summary": False, "count": 20})
@@ -105,17 +105,16 @@ class NewsCollector:
         try:
             logger.debug("Anspire request: keyword=%s, start=%s, end=%s", keyword, start_date, end_date)
             async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.post("https://api.anspire.ai/v1/news/search",
+                resp = await client.get("https://plugin.anspire.cn/api/ntsearch/search",
                     headers={"Authorization": f"Bearer {self._anspire_key}"},
-                    json={"query": keyword, "start_date": start_date,
-                          "end_date": end_date, "limit": 20})
+                    params={"query": keyword, "limit": 20})
                 resp.raise_for_status()
                 data = resp.json()
             items = [{"title": r.get("title", ""), "content": r.get("content", ""),
-                     "url": r.get("url", ""), "author": r.get("author", ""),
-                     "published_at": r.get("published_at", ""),
+                     "url": r.get("url", ""), "author": "",
+                     "published_at": r.get("date", ""),
                      "source": "anspire", "platform": "news"}
-                    for r in data.get("results", [])]
+                    for r in data.get("results", []) if r.get("url")]
             logger.info("Anspire returned %d results for '%s'", len(items), keyword)
             return items
         except Exception as e:

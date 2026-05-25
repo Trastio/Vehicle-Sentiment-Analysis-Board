@@ -55,12 +55,9 @@ class CollectionScheduler:
                 results.extend(posts)
 
         baidu_index = await self._gopup.collect_baidu_index(keyword, start_date, end_date)
-        weibo_index = await self._gopup.collect_weibo_index(keyword, start_date, end_date)
-        toutiao_index = await self._gopup.collect_toutiao_index(keyword, start_date, end_date)
-        google_index = await self._gopup.collect_google_index(keyword, start_date, end_date)
-        await self._store_index_data(vehicle_id, baidu_index, weibo_index, toutiao_index, google_index)
+        await self._store_index_data(vehicle_id, baidu_index)
 
-        index_total = len(baidu_index) + len(weibo_index) + len(toutiao_index) + len(google_index)
+        index_total = len(baidu_index)
         logger.info("Collection done for '%s': %d posts, %d index points", keyword, len(results), index_total)
         return results
 

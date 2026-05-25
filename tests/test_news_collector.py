@@ -114,10 +114,10 @@ async def test_search_anspire_success():
         mock_resp.raise_for_status = MagicMock()
         mock_resp.json.return_value = {"results": [
             {"title": "海豹新闻", "content": "内容", "url": "http://x.com",
-             "published_at": "2026-05-01", "author": "test"},
+             "date": "2026-05-01T20:00:00+08:00"},
         ]}
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.get = AsyncMock(return_value=mock_resp)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
         with patch("httpx.AsyncClient", return_value=mock_client):
@@ -134,7 +134,7 @@ async def test_search_anspire_api_error():
         c = NewsCollector()
         c._anspire_key = "key"
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(side_effect=httpx.HTTPStatusError(
+        mock_client.get = AsyncMock(side_effect=httpx.HTTPStatusError(
             "err", request=MagicMock(), response=MagicMock(status_code=500)))
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
