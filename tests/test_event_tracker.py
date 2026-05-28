@@ -60,3 +60,11 @@ def test_cluster_multi_tag_post():
     tags = {g["event_tag"] for g in groups}
     assert "异响/故障" in tags
     assert "维权投诉" in tags
+
+
+def test_cluster_post_without_event_tags():
+    posts = [
+        {"id": "1", "is_event": True, "event_tags": [], "analyzed_at": datetime(2026, 5, 1), "event_description": "事件但无标签"},
+    ]
+    groups = cluster_events(posts)
+    assert len(groups) == 0  # No tags to cluster by

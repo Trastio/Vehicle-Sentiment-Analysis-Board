@@ -42,7 +42,7 @@ def cluster_events(
 
         # Build timestamp matrix for DBSCAN
         times = np.array(
-            [p["analyzed_at"].timestamp() for p in posts]
+            [_to_timestamp(p["analyzed_at"]) for p in posts]
         ).reshape(-1, 1)
 
         db = DBSCAN(
@@ -65,6 +65,13 @@ def cluster_events(
 
     logger.info("Clustered %d posts into %d event groups", len(analyzed_posts), len(groups))
     return groups
+
+
+def _to_timestamp(val) -> float:
+    """Convert a datetime or numeric value to a Unix timestamp float."""
+    if isinstance(val, datetime):
+        return val.timestamp()
+    return float(val)
 
 
 def _make_group(gid: int, tag: str, members: list[dict]) -> dict:
