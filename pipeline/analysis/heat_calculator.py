@@ -6,6 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.schemas import HeatMetric, RawPost
 
+SOCIAL_SOURCES = ("mediacrawler",)
+
 
 class HeatMetricCalculator:
     def __init__(self, session: AsyncSession):
@@ -15,34 +17,28 @@ class HeatMetricCalculator:
         start = datetime.combine(target_date, datetime.min.time())
         end = datetime.combine(target_date + timedelta(days=1), datetime.min.time())
 
-        result = await self._session.execute(
-            select(
-                func.count(RawPost.id),
-                func.coalesce(func.sum(RawPost.likes), 0),
-                func.coalesce(func.sum(RawPost.comments), 0),
-                func.coalesce(func.sum(RawPost.shares), 0),
-            ).where(
-                RawPost.vehicle_id == vehicle_id,
-                RawPost.published_at >= start,
-                RawPost.published_at < end,
+        # Layer 1: attention index — preserve value set by scheduler (百度指数)
+        existing_metric = await self._session.execute(
+            select(HeatMetric).where(
+                HeatMetric.vehicle_id == vehicle_id,
+                HeatMetric.date == target_date,
             )
         )
-        row = result.one()
-        total, total_likes, total_comments, total_shares = row
+        existing = existing_metric.scalars().first()
+        attention_index = existing.attention_index if existing and existing.attention_index else 0.0
 
-        if total == 0:
-            return None
-
-        idx_result = await self._session.execute(
+        # Layer 2: discussion volume — social posts only (not comments)
+        discussion_result = await self._session.execute(
             select(func.count(RawPost.id)).where(
                 RawPost.vehicle_id == vehicle_id,
-                RawPost.source == "gopup_index",
+                RawPost.source == "mediacrawler",
                 RawPost.published_at >= start,
                 RawPost.published_at < end,
             )
         )
-        attention_count = idx_result.scalar() or 0
+        discussion_volume = discussion_result.scalar() or 0
 
+        # Layer 3: media volume — news articles count
         media_result = await self._session.execute(
             select(func.count(RawPost.id)).where(
                 RawPost.vehicle_id == vehicle_id,
@@ -51,36 +47,42 @@ class HeatMetricCalculator:
                 RawPost.published_at < end,
             )
         )
-        media_count = media_result.scalar() or 0
+        media_volume = media_result.scalar() or 0
 
-        # Discussion volume: total - index - news
-        discussion = total - attention_count - media_count
-
-        # Interaction intensity: (likes + comments + shares) / total
-        interaction = (total_likes + total_comments + total_shares) / total if total > 0 else 0.0
-
-        # Upsert
-        existing = await self._session.execute(
-            select(HeatMetric).where(
-                HeatMetric.vehicle_id == vehicle_id,
-                HeatMetric.date == target_date,
+        # Layer 4: interaction intensity — total engagement from social posts
+        interaction_result = await self._session.execute(
+            select(
+                func.coalesce(func.sum(RawPost.likes), 0),
+                func.coalesce(func.sum(RawPost.comments), 0),
+                func.coalesce(func.sum(RawPost.shares), 0),
+            ).where(
+                RawPost.vehicle_id == vehicle_id,
+                RawPost.source.in_(SOCIAL_SOURCES),
+                RawPost.published_at >= start,
+                RawPost.published_at < end,
             )
         )
-        metric = existing.scalars().first()
-        if metric:
-            metric.attention_index = float(attention_count)
-            metric.discussion_volume = max(0, discussion)
-            metric.media_volume = media_count
-            metric.interaction_intensity = float(interaction)
+        row = interaction_result.one()
+        interaction_intensity = float(row[0] * 1 + row[1] * 5 + row[2] * 10)
+
+        if discussion_volume == 0 and media_volume == 0 and interaction_intensity == 0.0 and attention_index == 0.0:
+            return None
+
+        # Upsert
+        if existing:
+            existing.discussion_volume = discussion_volume
+            existing.media_volume = media_volume
+            existing.interaction_intensity = interaction_intensity
+            metric = existing
         else:
             metric = HeatMetric(
                 id=str(uuid.uuid4()),
                 vehicle_id=vehicle_id,
                 date=target_date,
-                attention_index=float(attention_count),
-                discussion_volume=max(0, discussion),
-                media_volume=media_count,
-                interaction_intensity=float(interaction),
+                attention_index=attention_index,
+                discussion_volume=discussion_volume,
+                media_volume=media_volume,
+                interaction_intensity=interaction_intensity,
             )
             self._session.add(metric)
 
