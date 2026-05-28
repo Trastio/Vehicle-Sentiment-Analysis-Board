@@ -42,50 +42,60 @@ class MediaCrawlerWrapper:
     def is_available(self) -> bool:
         return (self._crawler_dir / "main.py").exists()
 
+    async def _run_crawler(self, keyword: str, platform: PlatformName) -> tuple[int, str]:
+        """Run MediaCrawler subprocess. Returns (returncode, platform_code)."""
+        code = PLATFORM_MAP.get(platform)
+        if not code or not self.is_available():
+            return -1, ""
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(self._crawler_dir)
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-u", "main.py",
+            "--platform", code,
+            "--lt", "cookie",
+            "--type", "search",
+            "--keywords", keyword,
+            "--headless", "true",
+            "--get_comment", "true",
+            "--save_data_option", "jsonl",
+            "--max_concurrency_num", "1",
+            env=env,
+            cwd=str(self._crawler_dir),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        except asyncio.TimeoutError:
+            proc.kill()
+            raise
+        if proc.returncode != 0:
+            err = stderr.decode(errors="replace")[-500:]
+            logger.warning("MediaCrawler %s failed (rc=%d): %s", platform, proc.returncode, err)
+            return proc.returncode or 1, code
+        return 0, code
+
     async def search(
         self,
         keyword: str,
         platform: PlatformName,
         max_notes: int = 50,
     ) -> list[dict]:
-        code = PLATFORM_MAP.get(platform)
-        if not code or not self.is_available():
-            return []
         try:
-            env = os.environ.copy()
-            env["PYTHONPATH"] = str(self._crawler_dir)
-            proc = await asyncio.create_subprocess_exec(
-                sys.executable, "-u", "main.py",
-                "--platform", code,
-                "--lt", "cookie",
-                "--type", "search",
-                "--keywords", keyword,
-                "--headless", "true",
-                "--get_comment", "true",
-                "--save_data_option", "jsonl",
-                "--max_concurrency_num", "1",
-                env=env,
-                cwd=str(self._crawler_dir),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
-            if proc.returncode != 0:
-                err = stderr.decode(errors="replace")[-500:]
-                logger.warning("MediaCrawler %s failed (rc=%d): %s", platform, proc.returncode, err)
+            rc, code = await self._run_crawler(keyword, platform)
+            if rc != 0:
                 return []
             results = self._read_results(code, keyword)
             logger.info("MediaCrawler %s: %d results for '%s'", platform, len(results), keyword)
             return results
         except asyncio.TimeoutError:
-            proc.kill()
             logger.warning("MediaCrawler %s timed out for '%s'", platform, keyword)
             return []
         except Exception as e:
             logger.warning("MediaCrawler %s error: %s", platform, e)
             return []
 
-    def _read_results(self, platform_code: str, keyword: str) -> list[dict]:
+    def _read_results(self, platform_code: str, keyword: str, *, enrich_comments: bool = True) -> list[dict]:
         data_name = DATA_DIR_MAP.get(platform_code, platform_code)
         data_dir = self._crawler_dir / "data" / data_name / "jsonl"
         if not data_dir.exists():
@@ -104,14 +114,15 @@ class MediaCrawlerWrapper:
                     results.append(self._normalize_item(item, platform_code))
             break
 
-        comments = self._read_comments(platform_code)
-        if comments:
-            results = self._enrich_with_comments(results, comments)
-            results.extend(self._orphan_comments(results, comments, platform_code))
-        elif results:
-            logger.warning("MediaCrawler %s: 0 comments fetched (cookie may be invalid)", platform_code)
+        if enrich_comments:
+            comments = self._read_comments(platform_code)
+            if comments:
+                results = self._enrich_with_comments(results, comments)
+                results.extend(self._orphan_comments(results, comments, platform_code))
+            elif results:
+                logger.warning("MediaCrawler %s: 0 comments fetched (cookie may be invalid)", platform_code)
+            results = [r for r in results if not self._is_dealer_post(r)]
 
-        results = [r for r in results if not self._is_dealer_post(r)]
         return results
 
     def _read_comments(self, platform_code: str) -> dict[str, list[dict]]:
@@ -179,26 +190,6 @@ class MediaCrawlerWrapper:
                 })
         return orphans
 
-    def _read_results_no_comment_enrich(self, platform_code: str, keyword: str) -> list[dict]:
-        """Like _read_results but without comment enrichment or orphan comments."""
-        data_name = DATA_DIR_MAP.get(platform_code, platform_code)
-        data_dir = self._crawler_dir / "data" / data_name / "jsonl"
-        if not data_dir.exists():
-            return []
-        results = []
-        for f in sorted(data_dir.glob("search_contents_*.jsonl"), reverse=True):
-            with open(f, encoding="utf-8") as fh:
-                for line in fh:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        item = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    results.append(self._normalize_item(item, platform_code))
-            break
-        return results
 
     @staticmethod
     def _extract_comments(
@@ -233,33 +224,11 @@ class MediaCrawlerWrapper:
         max_notes: int = 50,
     ) -> tuple[list[dict], list[dict]]:
         """Like search() but returns comments as a separate list instead of appending to content."""
-        code = PLATFORM_MAP.get(platform)
-        if not code or not self.is_available():
-            return [], []
         try:
-            env = os.environ.copy()
-            env["PYTHONPATH"] = str(self._crawler_dir)
-            proc = await asyncio.create_subprocess_exec(
-                sys.executable, "-u", "main.py",
-                "--platform", code,
-                "--lt", "cookie",
-                "--type", "search",
-                "--keywords", keyword,
-                "--headless", "true",
-                "--get_comment", "true",
-                "--save_data_option", "jsonl",
-                "--max_concurrency_num", "1",
-                env=env,
-                cwd=str(self._crawler_dir),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
-            if proc.returncode != 0:
-                err = stderr.decode(errors="replace")[-500:]
-                logger.warning("MediaCrawler %s failed (rc=%d): %s", platform, proc.returncode, err)
+            rc, code = await self._run_crawler(keyword, platform)
+            if rc != 0:
                 return [], []
-            results = self._read_results_no_comment_enrich(code, keyword)
+            results = self._read_results(code, keyword, enrich_comments=False)
             raw_comments = self._read_comments(code)
             comments = self._extract_comments(results, raw_comments, code)
             results = [r for r in results if not self._is_dealer_post(r)]
@@ -269,7 +238,6 @@ class MediaCrawlerWrapper:
             )
             return results, comments
         except asyncio.TimeoutError:
-            proc.kill()
             logger.warning("MediaCrawler %s timed out for '%s'", platform, keyword)
             return [], []
         except Exception as e:

@@ -5,10 +5,11 @@ that real users would search for on social media platforms.
 """
 import json
 import logging
-import os
 import re
 
 import httpx
+
+from utils.config import load_api_config
 
 logger = logging.getLogger(__name__)
 
@@ -27,18 +28,9 @@ EXPAND_PROMPT = """你是一位汽车舆情关键词专家。根据以下车型�
 请严格以 JSON 数组格式回复，不要添加其他内容。"""
 
 
-def _load_api_config() -> dict:
-    """Load API configuration from .secrets file."""
-    secrets_path = ".secrets"
-    if not os.path.exists(secrets_path):
-        return {}
-    with open(secrets_path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
 async def _call_llm(prompt: str) -> str:
     """Call GLM API with the given prompt and return the response text."""
-    config = _load_api_config()
+    config = load_api_config()
     glm_cfg = config.get("glm", {})
     api_key = glm_cfg.get("api_key", "")
     if not api_key:

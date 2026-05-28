@@ -1,11 +1,12 @@
 """Vehicle sentiment analysis pipeline — combined prompt + event tag pool + dim_sentiment."""
 import json
 import logging
-import os
-import re
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
+
+from utils.config import load_api_config
+from utils.llm_helpers import extract_json_object
 
 logger = logging.getLogger(__name__)
 
@@ -51,21 +52,11 @@ COMBINED_ANALYSIS_PROMPT = """分析这条汽车相关帖文，完成以下所�
 {{"is_event": true/false, "event_description": "...", "event_tags": ["标签1"], "opinion_tags": ["观点1"], "sentiment": "positive/negative/neutral", "dim_sentiment": {{"维度名": 分数}}, "confidence": 0.0-1.0}}"""
 
 
-# ── Config Loader ─────────────────────────────────────────────────────────
-
-def _load_api_config() -> dict:
-    secrets_path = ".secrets"
-    if not os.path.exists(secrets_path):
-        return {}
-    with open(secrets_path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
 # ── Analysis Pipeline ─────────────────────────────────────────────────────
 
 class AnalysisPipeline:
     def __init__(self):
-        config = _load_api_config()
+        config = load_api_config()
         glm_cfg = config.get("glm", {})
         deepseek_cfg = config.get("deepseek", {})
         if glm_cfg.get("api_key"):
@@ -82,37 +73,11 @@ class AnalysisPipeline:
             self._api_key = ""
             self._api_url = ""
             self._model = ""
-            self._use_anthropic_format = False
 
     # ── Unified API call ──────────────────────────────────────────────
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def _call_api(self, prompt: str) -> str:
-        if self._use_anthropic_format:
-            return await self._call_anthropic_api(prompt)
-        return await self._call_openai_api(prompt)
-
-    async def _call_anthropic_api(self, prompt: str) -> str:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                self._api_url,
-                headers={
-                    "x-api-key": self._api_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": self._model,
-                    "max_tokens": 1024,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            blocks = data.get("content", [])
-            return "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
-
-    async def _call_openai_api(self, prompt: str) -> str:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
                 self._api_url,
@@ -120,7 +85,6 @@ class AnalysisPipeline:
                 json={
                     "model": self._model,
                     "messages": [{"role": "user", "content": prompt}],
-                    "response_format": {"type": "json_object"},
                 },
             )
             resp.raise_for_status()
@@ -156,13 +120,8 @@ class AnalysisPipeline:
 
     @staticmethod
     def _parse_response(raw: str) -> dict:
-        # Match JSON that may contain nested objects (dim_sentiment)
-        match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', raw, re.DOTALL)
-        if not match:
-            return AnalysisPipeline._fallback_result()
-        try:
-            data = json.loads(match.group())
-        except json.JSONDecodeError:
+        data = extract_json_object(raw)
+        if data is None:
             return AnalysisPipeline._fallback_result()
 
         valid_sentiments = {"positive", "negative", "neutral"}

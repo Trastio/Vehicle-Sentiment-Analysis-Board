@@ -1,5 +1,4 @@
 import json
-import re
 import uuid
 from datetime import datetime, date as date_type, timedelta
 
@@ -8,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.schemas import AnalyzedPost, PostComment, RawPost, Vehicle
 from pipeline.analysis.analyzer import AnalysisPipeline
+from utils.llm_helpers import extract_json_object
+from utils.constants import ENGAGEMENT_WEIGHT_LIKES, ENGAGEMENT_WEIGHT_COMMENTS, ENGAGEMENT_WEIGHT_SHARES
 
 MAX_POSTS_PER_RUN = 200
 
@@ -63,9 +64,9 @@ async def summarize_comments(
     pipeline = AnalysisPipeline()
     try:
         raw = await pipeline._call_api(prompt)
-        match = re.search(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", raw, re.DOTALL)
-        if match:
-            return json.loads(match.group())
+        result = extract_json_object(raw)
+        if result is not None:
+            return result
     except Exception:
         pass
     return None
@@ -137,7 +138,7 @@ class BatchAnalysisRunner:
                 RawPost.published_at >= start_dt,
                 RawPost.published_at < end_dt,
             ).order_by(
-                desc(RawPost.likes * 1 + RawPost.comments * 5 + RawPost.shares * 10)
+                desc(RawPost.likes * ENGAGEMENT_WEIGHT_LIKES + RawPost.comments * ENGAGEMENT_WEIGHT_COMMENTS + RawPost.shares * ENGAGEMENT_WEIGHT_SHARES)
             ).limit(5)
         )
         top_posts = top_posts_result.scalars().all()

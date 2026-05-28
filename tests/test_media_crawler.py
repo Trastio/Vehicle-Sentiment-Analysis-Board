@@ -301,20 +301,19 @@ class TestReadResultsNoCommentEnrich:
                 json.dumps({"note_id": "abc123", "content": "多少钱", "nickname": "u"}, ensure_ascii=False) + "\n",
                 encoding="utf-8",
             )
-            results = c._read_results_no_comment_enrich("xhs", "海豚")
+            results = c._read_results("xhs", "海豚", enrich_comments=False)
         assert len(results) == 1
         assert results[0]["title"] == "海豚提车"
-        # Content should NOT have [热门评论] appended
         assert "[热门评论]" not in results[0]["content"]
 
     def test_empty_dir_returns_empty(self, tmp_path):
         with patch.object(MediaCrawlerWrapper, "__init__", _no_init):
             c = MediaCrawlerWrapper()
             c._crawler_dir = tmp_path
-            assert c._read_results_no_comment_enrich("xhs", "test") == []
+            assert c._read_results("xhs", "test", enrich_comments=False) == []
 
     def test_does_not_filter_dealer_posts(self, tmp_path):
-        """Dealer filtering should NOT happen in _read_results_no_comment_enrich (done by caller)."""
+        """Dealer filtering should NOT happen in _read_results(enrich_comments=False) (done by caller)."""
         with patch.object(MediaCrawlerWrapper, "__init__", _no_init):
             c = MediaCrawlerWrapper()
             c._crawler_dir = tmp_path
@@ -325,7 +324,7 @@ class TestReadResultsNoCommentEnrich:
                             "note_url": "http://1", "liked_count": 5}, ensure_ascii=False) + "\n",
                 encoding="utf-8",
             )
-            results = c._read_results_no_comment_enrich("xhs", "test")
+            results = c._read_results("xhs", "test", enrich_comments=False)
         assert len(results) == 1
         assert results[0]["author"] == "比亚迪海洋4S店"
 
@@ -360,7 +359,7 @@ class TestSearchWithComments:
             mock_proc.communicate = AsyncMock(return_value=(b"", b""))
             mock_proc.returncode = 0
             with patch("pipeline.collectors.media_crawler.asyncio.create_subprocess_exec", return_value=mock_proc):
-                with patch.object(c, "_read_results_no_comment_enrich", return_value=[
+                with patch.object(c, "_read_results", return_value=[
                     {"title": "海豚提车", "content": "提车一周感受", "url": "https://www.xiaohongshu.com/explore/abc123",
                      "source": "mediacrawler", "platform": "xhs", "author": "车主"},
                 ]):
@@ -385,7 +384,7 @@ class TestSearchWithComments:
             mock_proc.communicate = AsyncMock(return_value=(b"", b""))
             mock_proc.returncode = 0
             with patch("pipeline.collectors.media_crawler.asyncio.create_subprocess_exec", return_value=mock_proc):
-                with patch.object(c, "_read_results_no_comment_enrich", return_value=[
+                with patch.object(c, "_read_results", return_value=[
                     {"title": "海豚体验", "content": "不错", "url": "http://1",
                      "source": "mediacrawler", "platform": "xhs", "author": "车主小王"},
                     {"title": "优惠", "content": "促销", "url": "http://2",

@@ -1,5 +1,4 @@
 import json
-import os
 import uuid
 from datetime import date, datetime, timedelta
 
@@ -11,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import get_session
 from models.schemas import Report, Vehicle
+from utils.config import load_api_config
 
 
 class BriefRequest(BaseModel):
@@ -27,17 +27,9 @@ class DeepReportRequest(BaseModel):
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
 
-def _load_api_config() -> dict:
-    path = ".secrets"
-    if not os.path.exists(path):
-        return {}
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
 async def generate_brief_content(vehicle_name: str, event_type: str, anomaly_date: str,
                                  volume_change: float, top_posts: list[str]) -> str:
-    config = _load_api_config()
+    config = load_api_config()
     api_key = config.get("deepseek", {}).get("api_key", "")
     api_url = config.get("deepseek", {}).get("api_url", "https://api.deepseek.com/v1/chat/completions")
     model = config.get("deepseek", {}).get("model", "deepseek-chat")
@@ -71,7 +63,7 @@ async def generate_brief_content(vehicle_name: str, event_type: str, anomaly_dat
 async def generate_deep_report_content(vehicle_name: str, start_date: str, end_date: str,
                                        sentiment_data: dict, event_data: list,
                                        anomaly_data: list) -> str:
-    config = _load_api_config()
+    config = load_api_config()
     api_key = config.get("deepseek", {}).get("api_key", "")
     api_url = config.get("deepseek", {}).get("api_url", "https://api.deepseek.com/v1/chat/completions")
     model = config.get("deepseek", {}).get("model", "deepseek-chat")

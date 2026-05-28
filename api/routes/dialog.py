@@ -1,5 +1,4 @@
 import json
-import os
 import uuid
 from datetime import date, datetime, timedelta
 
@@ -14,6 +13,7 @@ from models.database import get_session
 from models.schemas import (
     AnalyzedPost, DialogConversation, DialogMessage, EventGroup, HeatMetric, RawPost, Vehicle,
 )
+from utils.config import load_api_config
 
 router = APIRouter(prefix="/api/dialog", tags=["dialog"])
 
@@ -26,12 +26,6 @@ class AnchorDialogRequest(BaseModel):
     conversation_id: str | None = None
 
 
-def _load_api_config() -> dict:
-    path = ".secrets"
-    if not os.path.exists(path):
-        return {}
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
 
 
 async def _build_context(vehicle_id: str, anchor_type: str, anchor_data: dict, session: AsyncSession) -> str:
@@ -221,7 +215,7 @@ async def _build_context(vehicle_id: str, anchor_type: str, anchor_data: dict, s
 
 
 async def generate_dialog_response(vehicle_name: str, context: str, message: str, history: list[dict]) -> list[str]:
-    config = _load_api_config()
+    config = load_api_config()
     api_key = config.get("deepseek", {}).get("api_key", "")
     api_url = config.get("deepseek", {}).get("api_url", "https://api.deepseek.com/v1/chat/completions")
     model = config.get("deepseek", {}).get("model", "deepseek-chat")

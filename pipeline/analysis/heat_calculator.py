@@ -5,6 +5,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.schemas import HeatMetric, RawPost
+from utils.constants import ENGAGEMENT_WEIGHT_LIKES, ENGAGEMENT_WEIGHT_COMMENTS, ENGAGEMENT_WEIGHT_SHARES
 
 SOCIAL_SOURCES = ("mediacrawler",)
 
@@ -63,7 +64,7 @@ class HeatMetricCalculator:
             )
         )
         row = interaction_result.one()
-        interaction_intensity = float(row[0] * 1 + row[1] * 5 + row[2] * 10)
+        interaction_intensity = float(row[0] * ENGAGEMENT_WEIGHT_LIKES + row[1] * ENGAGEMENT_WEIGHT_COMMENTS + row[2] * ENGAGEMENT_WEIGHT_SHARES)
 
         if discussion_volume == 0 and media_volume == 0 and interaction_intensity == 0.0 and attention_index == 0.0:
             return None

@@ -119,7 +119,7 @@ class TestFallback:
 class TestApiSelection:
     def test_uses_glm_when_configured(self):
         secrets = {"glm": {"api_key": "test-key", "base_url": "https://open.bigmodel.cn/api/paas/v4"}}
-        with patch("pipeline.analysis.analyzer._load_api_config", return_value=secrets):
+        with patch("pipeline.analysis.analyzer.load_api_config", return_value=secrets):
             p = AnalysisPipeline()
         assert p._use_anthropic_format is False
         assert p._api_key == "test-key"
@@ -127,13 +127,13 @@ class TestApiSelection:
 
     def test_uses_deepseek_when_no_glm(self):
         secrets = {"deepseek": {"api_key": "ds-key", "api_url": "https://api.deepseek.com/v1/chat/completions"}}
-        with patch("pipeline.analysis.analyzer._load_api_config", return_value=secrets):
+        with patch("pipeline.analysis.analyzer.load_api_config", return_value=secrets):
             p = AnalysisPipeline()
         assert p._use_anthropic_format is False
         assert p._api_key == "ds-key"
 
     def test_no_key_means_empty(self):
-        with patch("pipeline.analysis.analyzer._load_api_config", return_value={}):
+        with patch("pipeline.analysis.analyzer.load_api_config", return_value={}):
             p = AnalysisPipeline()
         assert p._api_key == ""
 
@@ -239,7 +239,7 @@ class TestAnalyzeSingleIntegration:
     @pytest.mark.asyncio
     async def test_analyze_single_with_openai_format_mock(self):
         secrets = {"glm": {"api_key": "test-key", "base_url": "https://open.bigmodel.cn/api/paas/v4"}}
-        with patch("pipeline.analysis.analyzer._load_api_config", return_value=secrets):
+        with patch("pipeline.analysis.analyzer.load_api_config", return_value=secrets):
             p = AnalysisPipeline()
 
         mock_resp = MagicMock()
