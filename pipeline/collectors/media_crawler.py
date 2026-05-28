@@ -1,14 +1,38 @@
 import asyncio
 import json
+import logging
 import os
+import re
+import sys
 from pathlib import Path
+from typing import Literal
+
+logger = logging.getLogger(__name__)
 
 MEDIA_CRAWLER_DIR = os.getenv("MEDIA_CRAWLER_DIR", "vendor/MediaCrawler")
 
 PLATFORM_MAP = {
-    "xiaohongshu": "xhs", "bilibili": "bili", "zhihu": "zhihu",
-    "weibo": "wb", "douyin": "dy", "kuaishou": "ks", "tieba": "tieba",
+    "xiaohongshu": "xhs",
+    "weibo": "wb",
+    "douyin": "dy",
+    "kuaishou": "ks",
 }
+
+DATA_DIR_MAP = {
+    "xhs": "xhs",
+    "wb": "weibo",
+    "dy": "douyin",
+    "ks": "kuaishou",
+}
+
+DEALER_PATTERNS = re.compile(
+    r"4[sS]店|经销商|汽贸|海洋网|王朝网|"
+    r"(?:比亚迪|长安|吉利|奇瑞|长城|广汽|上汽|一汽|东风|北汽|小鹏|蔚来|理想|问界|零跑|极氪|领克|宝骏)"
+    r".{0,10}(?:海洋|王朝|体验|交付|销售|直营|授权|服务|售后|4S|店|汽车)",
+    re.IGNORECASE,
+)
+
+PlatformName = Literal["xiaohongshu", "weibo", "douyin", "kuaishou"]
 
 
 class MediaCrawlerWrapper:
@@ -18,58 +42,279 @@ class MediaCrawlerWrapper:
     def is_available(self) -> bool:
         return (self._crawler_dir / "main.py").exists()
 
-    async def search(self, keyword: str, platform: str, max_notes: int = 20) -> list[dict]:
-        platform_code = PLATFORM_MAP.get(platform, platform)
-        if not self.is_available():
+    async def search(
+        self,
+        keyword: str,
+        platform: PlatformName,
+        max_notes: int = 50,
+    ) -> list[dict]:
+        code = PLATFORM_MAP.get(platform)
+        if not code or not self.is_available():
             return []
-        config_path = self._crawler_dir / "config" / "base_config.py"
-        if config_path.exists():
-            self._update_config(config_path, keyword, max_notes)
-        proc = await asyncio.create_subprocess_exec(
-            "python", "main.py", "--platform", platform_code, "--lt", "qrcode", "--type", "search",
-            cwd=str(self._crawler_dir),
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )
         try:
-            await asyncio.wait_for(proc.communicate(), timeout=120)
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(self._crawler_dir)
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, "-u", "main.py",
+                "--platform", code,
+                "--lt", "cookie",
+                "--type", "search",
+                "--keywords", keyword,
+                "--headless", "true",
+                "--get_comment", "true",
+                "--save_data_option", "jsonl",
+                "--max_concurrency_num", "1",
+                env=env,
+                cwd=str(self._crawler_dir),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+            if proc.returncode != 0:
+                err = stderr.decode(errors="replace")[-500:]
+                logger.warning("MediaCrawler %s failed (rc=%d): %s", platform, proc.returncode, err)
+                return []
+            results = self._read_results(code, keyword)
+            logger.info("MediaCrawler %s: %d results for '%s'", platform, len(results), keyword)
+            return results
         except asyncio.TimeoutError:
             proc.kill()
+            logger.warning("MediaCrawler %s timed out for '%s'", platform, keyword)
             return []
-        return self._read_results(platform_code, keyword)
-
-    def _update_config(self, config_path: Path, keyword: str, max_notes: int):
-        content = config_path.read_text(encoding="utf-8")
-        lines = []
-        for line in content.split("\n"):
-            if line.strip().startswith("KEYWORDS"):
-                lines.append(f'KEYWORDS = "{keyword}"')
-            elif line.strip().startswith("MAX_NOTE_COUNT"):
-                lines.append(f"MAX_NOTE_COUNT = {max_notes}")
-            else:
-                lines.append(line)
-        config_path.write_text("\n".join(lines), encoding="utf-8")
+        except Exception as e:
+            logger.warning("MediaCrawler %s error: %s", platform, e)
+            return []
 
     def _read_results(self, platform_code: str, keyword: str) -> list[dict]:
-        data_dir = self._crawler_dir / "data"
+        data_name = DATA_DIR_MAP.get(platform_code, platform_code)
+        data_dir = self._crawler_dir / "data" / data_name / "jsonl"
         if not data_dir.exists():
             return []
-        json_file = data_dir / f"{platform_code}_{keyword.replace(' ', '_')}.json"
-        if not json_file.exists():
-            return []
-        with open(json_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
         results = []
-        if isinstance(data, list):
-            for item in data:
-                results.append({
-                    "title": item.get("title", ""),
-                    "content": item.get("desc", item.get("content", "")),
-                    "author": item.get("nickname", item.get("author", "")),
-                    "url": item.get("note_id", item.get("url", "")),
-                    "likes": item.get("liked_count", item.get("likes", 0)),
-                    "comments": item.get("comment_count", item.get("comments", 0)),
-                    "shares": item.get("share_count", item.get("shares", 0)),
-                    "platform": platform_code,
-                    "source": "mediacrawler",
-                })
+        for f in sorted(data_dir.glob("search_contents_*.jsonl"), reverse=True):
+            with open(f, encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        item = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    results.append(self._normalize_item(item, platform_code))
+            break
+
+        comments = self._read_comments(platform_code)
+        if comments:
+            results = self._enrich_with_comments(results, comments)
+            results.extend(self._orphan_comments(results, comments, platform_code))
+        elif results:
+            logger.warning("MediaCrawler %s: 0 comments fetched (cookie may be invalid)", platform_code)
+
+        results = [r for r in results if not self._is_dealer_post(r)]
         return results
+
+    def _read_comments(self, platform_code: str) -> dict[str, list[dict]]:
+        data_name = DATA_DIR_MAP.get(platform_code, platform_code)
+        data_dir = self._crawler_dir / "data" / data_name / "jsonl"
+        if not data_dir.exists():
+            return {}
+        comments: dict[str, list[dict]] = {}
+        for f in sorted(data_dir.glob("search_comments_*.jsonl"), reverse=True):
+            with open(f, encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        c = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    note_id = c.get("note_id", c.get("aweme_id", ""))
+                    if note_id:
+                        comments.setdefault(note_id, []).append(c)
+            break
+        return comments
+
+    @staticmethod
+    def _enrich_with_comments(posts: list[dict], comments: dict[str, list[dict]]) -> list[dict]:
+        for post in posts:
+            post_url = post.get("url", "")
+            note_id = post_url.rsplit("/", 1)[-1] if post_url else ""
+            post_comments = comments.get(note_id, [])
+            if post_comments:
+                top_comments = sorted(post_comments, key=lambda c: int(c.get("like_count", 0) or 0), reverse=True)[:5]
+                comment_texts = [c.get("content", "") for c in top_comments if c.get("content")]
+                if comment_texts:
+                    post["content"] = post["content"] + "\n[热门评论] " + " | ".join(comment_texts)
+        return posts
+
+    @staticmethod
+    def _orphan_comments(posts: list[dict], comments: dict[str, list[dict]], platform_code: str) -> list[dict]:
+        matched_ids = set()
+        for post in posts:
+            post_url = post.get("url", "")
+            note_id = post_url.rsplit("/", 1)[-1] if post_url else ""
+            if note_id:
+                matched_ids.add(note_id)
+        orphans = []
+        for note_id, clist in comments.items():
+            if note_id in matched_ids:
+                continue
+            for c in clist:
+                content = c.get("content", "")
+                if not content:
+                    continue
+                orphans.append({
+                    "title": "",
+                    "content": content,
+                    "author": c.get("nickname", ""),
+                    "url": f"{note_id}#comment-{c.get('comment_id', '')}",
+                    "likes": int(c.get("like_count", 0) or 0),
+                    "comments": 0,
+                    "shares": 0,
+                    "platform": platform_code,
+                    "source": "mediacrawler_comment",
+                    "published_at": MediaCrawlerWrapper._extract_published_at(c),
+                })
+        return orphans
+
+    def _read_results_no_comment_enrich(self, platform_code: str, keyword: str) -> list[dict]:
+        """Like _read_results but without comment enrichment or orphan comments."""
+        data_name = DATA_DIR_MAP.get(platform_code, platform_code)
+        data_dir = self._crawler_dir / "data" / data_name / "jsonl"
+        if not data_dir.exists():
+            return []
+        results = []
+        for f in sorted(data_dir.glob("search_contents_*.jsonl"), reverse=True):
+            with open(f, encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        item = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    results.append(self._normalize_item(item, platform_code))
+            break
+        return results
+
+    @staticmethod
+    def _extract_comments(
+        posts: list[dict],
+        raw_comments: dict[str, list[dict]],
+        platform_code: str,
+    ) -> list[dict]:
+        """Extract comments as a separate flat list, each linked to its parent post."""
+        comments = []
+        for post in posts:
+            post_url = post.get("url", "")
+            note_id = post_url.rsplit("/", 1)[-1] if post_url else ""
+            for c in raw_comments.get(note_id, []):
+                content = c.get("content", "")
+                if not content:
+                    continue
+                comments.append({
+                    "post_url": post_url,
+                    "post_note_id": note_id,
+                    "content": content,
+                    "author": c.get("nickname", ""),
+                    "likes": int(c.get("like_count", 0) or 0),
+                    "platform": platform_code,
+                    "published_at": MediaCrawlerWrapper._extract_published_at(c),
+                })
+        return comments
+
+    async def search_with_comments(
+        self,
+        keyword: str,
+        platform: PlatformName,
+        max_notes: int = 50,
+    ) -> tuple[list[dict], list[dict]]:
+        """Like search() but returns comments as a separate list instead of appending to content."""
+        code = PLATFORM_MAP.get(platform)
+        if not code or not self.is_available():
+            return [], []
+        try:
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(self._crawler_dir)
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, "-u", "main.py",
+                "--platform", code,
+                "--lt", "cookie",
+                "--type", "search",
+                "--keywords", keyword,
+                "--headless", "true",
+                "--get_comment", "true",
+                "--save_data_option", "jsonl",
+                "--max_concurrency_num", "1",
+                env=env,
+                cwd=str(self._crawler_dir),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+            if proc.returncode != 0:
+                err = stderr.decode(errors="replace")[-500:]
+                logger.warning("MediaCrawler %s failed (rc=%d): %s", platform, proc.returncode, err)
+                return [], []
+            results = self._read_results_no_comment_enrich(code, keyword)
+            raw_comments = self._read_comments(code)
+            comments = self._extract_comments(results, raw_comments, code)
+            results = [r for r in results if not self._is_dealer_post(r)]
+            logger.info(
+                "MediaCrawler %s: %d posts + %d comments for '%s'",
+                platform, len(results), len(comments), keyword,
+            )
+            return results, comments
+        except asyncio.TimeoutError:
+            proc.kill()
+            logger.warning("MediaCrawler %s timed out for '%s'", platform, keyword)
+            return [], []
+        except Exception as e:
+            logger.warning("MediaCrawler %s error: %s", platform, e)
+            return [], []
+
+    @staticmethod
+    def _is_dealer_post(post: dict) -> bool:
+        author = post.get("author", "")
+        if DEALER_PATTERNS.search(author):
+            return True
+        title = post.get("title", "")
+        if "4S" in title and ("优惠" in title or "促销" in title or "报价" in title):
+            return True
+        return False
+
+    @staticmethod
+    def _extract_published_at(item: dict) -> str:
+        ts = item.get("time") or item.get("create_time")
+        if ts:
+            try:
+                from datetime import datetime, timezone
+                val = int(ts)
+                if val > 1e12:
+                    val = val // 1000
+                return datetime.fromtimestamp(val, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+            except (ValueError, TypeError, OSError):
+                pass
+        return ""
+
+    @staticmethod
+    def _normalize_item(item: dict, platform_code: str) -> dict:
+        content = item.get("desc", item.get("content", ""))
+        title = item.get("title", "")
+        if not title and content:
+            title = content[:40] + ("..." if len(content) > 40 else "")
+        return {
+            "title": title,
+            "content": content,
+            "author": item.get("nickname", item.get("author", "")),
+            "url": item.get("note_url", item.get("url", item.get("note_id", ""))),
+            "likes": int(item.get("liked_count", item.get("likes", 0)) or 0),
+            "comments": int(item.get("comment_count", item.get("comments_count", item.get("comments", 0))) or 0),
+            "shares": int(item.get("share_count", item.get("shared_count", item.get("shares", 0))) or 0),
+            "platform": platform_code,
+            "source": "mediacrawler",
+            "published_at": MediaCrawlerWrapper._extract_published_at(item),
+        }
