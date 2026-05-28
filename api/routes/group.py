@@ -15,8 +15,8 @@ router = APIRouter(prefix="/api", tags=["groups"])
 
 class GroupCreate(BaseModel):
     name: str
-    description: Optional[str] = None
-    vehicle_ids: list[str]
+    description: str = ""
+    vehicle_ids: list[str] = []
 
 
 class GroupUpdate(BaseModel):
@@ -86,4 +86,5 @@ def _to_dict(g: VehicleGroup) -> dict:
         "description": g.description,
         "vehicle_ids": json.loads(g.vehicle_ids) if g.vehicle_ids else [],
         "created_at": str(g.created_at) if g.created_at else None,
+        "updated_at": str(g.updated_at) if g.updated_at else None,
     }
