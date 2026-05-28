@@ -19,7 +19,8 @@ class BatchAnalysisRunner:
         self._max_posts = max_posts
 
     async def _analyze_single_post(self, post: RawPost) -> dict:
-        return await self._pipeline.analyze_single(post.content)
+        text = post.full_content if post.full_content else post.content
+        return await self._pipeline.analyze_single(text)
 
     async def run_for_vehicle(self, vehicle_id: str) -> dict:
         vehicle = await self._session.get(Vehicle, vehicle_id)
@@ -50,6 +51,9 @@ class BatchAnalysisRunner:
                     opinion_tags=json.dumps(analysis.get("opinion_tags", []), ensure_ascii=False),
                     confidence=max(0.0, min(1.0, confidence)),
                     model_used=self._pipeline._model or "deepseek-v4-flash",
+                    is_event=analysis.get("is_event", False),
+                    event_description=analysis.get("event_description", ""),
+                    dim_sentiment=json.dumps(analysis.get("dim_sentiment", {}), ensure_ascii=False),
                 ))
                 post.analysis_status = "analyzed"
                 analyzed += 1
