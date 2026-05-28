@@ -14,10 +14,8 @@ async def test_crawl_trafilatura_success():
 
 @pytest.mark.asyncio
 async def test_crawl_fallback_to_snippet():
-    with patch("pipeline.collectors.full_text_crawler._try_trafilatura") as mock_tf, \
-         patch("pipeline.collectors.full_text_crawler._try_crawl4ai") as mock_c4:
+    with patch("pipeline.collectors.full_text_crawler._try_trafilatura") as mock_tf:
         mock_tf.return_value = {"url": "https://example.com", "full_text": None, "status": "failed"}
-        mock_c4.return_value = {"url": "https://example.com", "full_text": None, "status": "failed"}
         result = await crawl_full_text("https://example.com", "fallback snippet text")
         assert result["status"] == "fallback"
         assert result["full_text"] == "fallback snippet text"

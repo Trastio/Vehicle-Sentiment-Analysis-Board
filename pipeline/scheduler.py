@@ -18,6 +18,7 @@ from pipeline.collectors.news_collector import NewsCollector
 logger = logging.getLogger(__name__)
 
 _MAX_EXPANDED_KEYWORDS = 5
+_CRAWL_CONCURRENCY = 5
 
 
 class CollectionScheduler:
@@ -81,16 +82,22 @@ class CollectionScheduler:
         return posts
 
     async def _crawl_full_texts(self, posts: list[dict]) -> list[dict]:
-        tasks = []
+        sem = asyncio.Semaphore(_CRAWL_CONCURRENCY)
+        crawl_jobs = []
+
+        async def _limited_crawl(url: str, snippet: str):
+            async with sem:
+                return await crawl_full_text(url, snippet)
+
         for post in posts:
             if post.get("source") in ("bocha", "anspire", "news") and post.get("url"):
-                tasks.append(crawl_full_text(post["url"], post.get("content", "")))
+                crawl_jobs.append(_limited_crawl(post["url"], post.get("content", "")))
             else:
-                tasks.append(None)
-        results = await asyncio.gather(*(t for t in tasks if t is not None), return_exceptions=True)
+                crawl_jobs.append(None)
+        results = await asyncio.gather(*(j for j in crawl_jobs if j is not None), return_exceptions=True)
         ri = 0
         for i, post in enumerate(posts):
-            if tasks[i] is None:
+            if crawl_jobs[i] is None:
                 continue
             if isinstance(results[ri], Exception):
                 ri += 1
