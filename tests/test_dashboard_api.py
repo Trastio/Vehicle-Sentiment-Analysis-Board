@@ -1,4 +1,4 @@
-"""T3.1 Tests: Dashboard API — 9 tests."""
+"""T3.2 Tests: Dashboard API — 10 tests."""
 import json
 import uuid
 from datetime import date, datetime, timedelta
@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 
 from models.database import get_session
 from models.schemas import (
-    AnalyzedPost, AnomalyEvent, Base, HeatMetric, RawPost, Report, Vehicle,
+    AnalyzedPost, AnomalyEvent, Base, EventGroup, HeatMetric, RawPost, Report, Vehicle,
 )
 
 
@@ -86,6 +86,8 @@ async def test_overview(client):
     assert "negative" in data
     assert "neutral" in data
     assert "health_score" in data
+    assert "week_change_rate" in data
+    assert isinstance(data["week_change_rate"], (int, float, type(None)))
 
 
 async def test_overview_vehicle_not_found(client):
@@ -144,3 +146,38 @@ async def test_reports_list(client):
     resp = await client.get(f"/api/dashboard/reports/{vid}")
     assert resp.status_code == 200
     assert isinstance(resp.json(), list)
+
+
+async def test_competitor_comparison(client):
+    resp = await client.post("/api/vehicles", json={"name": "海豹", "brand": "比亚迪"})
+    vid = resp.json()["id"]
+    resp2 = await client.post("/api/vehicles", json={"name": "Model 3", "brand": "特斯拉"})
+    comp_id = resp2.json()["id"]
+    await client.put(f"/api/vehicles/{vid}/competitors", json=[comp_id])
+
+    resp = await client.get(f"/api/dashboard/competitor-comparison/{vid}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+    assert len(data) >= 2
+    names = [d["name"] for d in data]
+    assert "海豹" in names
+    assert "Model 3" in names
+    for item in data:
+        assert "positive" in item
+        assert "negative" in item
+        assert "neutral" in item
+
+
+async def test_competitor_comparison_no_competitors(client):
+    resp = await client.post("/api/vehicles", json={"name": "海豹", "brand": "比亚迪"})
+    vid = resp.json()["id"]
+    resp = await client.get(f"/api/dashboard/competitor-comparison/{vid}")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+async def test_event_timeline_returns_list(client):
+    response = await client.get("/api/dashboard/vehicles/nonexistent/events")
+    assert response.status_code == 200
+    assert isinstance(response.json(), list)
