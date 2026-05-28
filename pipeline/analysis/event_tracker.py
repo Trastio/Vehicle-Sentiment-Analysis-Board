@@ -52,16 +52,14 @@ def cluster_events(
         )
         labels = db.fit_predict(times)
 
-        for label in set(labels):
-            if label == -1:
-                # Noise points become singleton groups
-                for idx in np.where(labels == -1)[0]:
-                    groups.append(_make_group(group_id, tag, [posts[idx]]))
-                    group_id += 1
-            else:
-                members = [posts[i] for i in np.where(labels == label)[0]]
-                groups.append(_make_group(group_id, tag, members))
-                group_id += 1
+        noise_mask = labels == -1
+        for idx in np.where(noise_mask)[0]:
+            groups.append(_make_group(group_id, tag, [posts[idx]]))
+            group_id += 1
+        for label in set(labels) - {-1}:
+            members = [posts[i] for i in np.where(labels == label)[0]]
+            groups.append(_make_group(group_id, tag, members))
+            group_id += 1
 
     logger.info("Clustered %d posts into %d event groups", len(analyzed_posts), len(groups))
     return groups

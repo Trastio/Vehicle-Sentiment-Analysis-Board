@@ -5,7 +5,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional
 
 from models.database import get_session
 from models.schemas import VehicleGroup
@@ -20,9 +19,9 @@ class GroupCreate(BaseModel):
 
 
 class GroupUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    vehicle_ids: Optional[list[str]] = None
+    name: str | None = None
+    description: str | None = None
+    vehicle_ids: list[str] | None = None
 
 
 @router.post("/groups")

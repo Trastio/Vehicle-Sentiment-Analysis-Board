@@ -1,11 +1,13 @@
+import asyncio
 import json
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import get_session
+from api.pipeline_state import pipeline_phases
+from models.database import get_session, async_session
 from models.schemas import AnalyzedPost, AnomalyEvent, HeatMetric, RawPost, Vehicle
 from pipeline.analysis.batch_runner import BatchAnalysisRunner
 from pipeline.analysis.heat_calculator import HeatMetricCalculator
@@ -13,19 +15,44 @@ from pipeline.analysis.heat_calculator import HeatMetricCalculator
 router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 
 
+async def _run_analysis_pipeline(vehicle_id: str, _session_factory=None):
+    _sf = _session_factory or async_session
+    pipeline_phases[vehicle_id] = {"phase": "analyzing", "posts_collected": pipeline_phases.get(vehicle_id, {}).get("posts_collected", 0), "analyzed": 0, "error": None}
+
+    async with _sf() as session:
+        try:
+            runner = BatchAnalysisRunner(session)
+            result = await runner.run_for_vehicle(vehicle_id)
+            analyzed = result.get("analyzed", 0)
+
+            pipeline_phases[vehicle_id] = {"phase": "calculating", "posts_collected": pipeline_phases[vehicle_id]["posts_collected"], "analyzed": analyzed, "error": None}
+
+            calc = HeatMetricCalculator(session)
+            end = date.today()
+            start = end - timedelta(days=90)
+            await calc.calculate_range(vehicle_id, start, end)
+
+            from pipeline.analysis.anomaly_detector import AnomalyDetector
+            detector = AnomalyDetector(session)
+            await detector.check_range(vehicle_id, start, end)
+
+            pipeline_phases[vehicle_id] = {"phase": "completed", "posts_collected": pipeline_phases[vehicle_id]["posts_collected"], "analyzed": analyzed, "error": None}
+        except Exception as e:
+            pipeline_phases[vehicle_id] = {"phase": "error", "posts_collected": 0, "analyzed": 0, "error": str(e)}
+
+
 @router.post("/trigger/{vehicle_id}")
 async def trigger_analysis(vehicle_id: str, session: AsyncSession = Depends(get_session)):
     vehicle = await session.get(Vehicle, vehicle_id)
     if not vehicle:
         raise HTTPException(404, detail="Vehicle not found")
-    runner = BatchAnalysisRunner(session)
-    return await runner.run_for_vehicle(vehicle_id)
 
+    phase_info = pipeline_phases.get(vehicle_id, {})
+    if phase_info.get("phase") in ("collecting", "analyzing", "calculating"):
+        return {"vehicle_id": vehicle_id, "status": "already_running", "phase": phase_info["phase"]}
 
-@router.post("/trigger-all")
-async def trigger_all_analysis(session: AsyncSession = Depends(get_session)):
-    runner = BatchAnalysisRunner(session)
-    return await runner.run_all_pending()
+    asyncio.create_task(_run_analysis_pipeline(vehicle_id))
+    return {"vehicle_id": vehicle_id, "status": "started", "phase": "analyzing"}
 
 
 @router.get("/heat-metrics/{vehicle_id}")

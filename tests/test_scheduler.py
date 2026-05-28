@@ -270,17 +270,22 @@ class TestResolveUrls:
     async def test_resolves_xhslink(self, db):
         """URLs with xhslink.com get resolved_note_id."""
         from pipeline.scheduler import CollectionScheduler
+
+        async def _fake_resolve(url: str) -> str:
+            if "xhslink.com" in url:
+                return "resolved_note_abc"
+            return url.rsplit("/", 1)[-1].split("?")[0]
+
         s = CollectionScheduler(db)
         posts = [
             {"url": "https://xhslink.com/abc123", "title": "test"},
             {"url": "https://example.com/article", "title": "no-resolve"},
         ]
         with patch("pipeline.scheduler.resolve_note_id", new_callable=AsyncMock,
-                    return_value="resolved_note_abc") as mock_resolve:
+                    side_effect=_fake_resolve):
             result = await s._resolve_urls(posts)
         assert result[0].get("resolved_note_id") == "resolved_note_abc"
         assert "resolved_note_id" not in result[1]
-        mock_resolve.assert_called_once_with("https://xhslink.com/abc123")
 
     @pytest.mark.asyncio
     async def test_non_xhslink_unchanged(self, db):

@@ -185,7 +185,7 @@ async def get_anomaly_timeline(
 async def get_posts(
     vehicle_id: str,
     page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100),
-    sentiment: str = Query(None), platform: str = Query(None),
+    sentiment: str | None = Query(None), platform: str | None = Query(None),
     session: AsyncSession = Depends(get_session),
 ):
     await _get_vehicle_or_404(vehicle_id, session)
@@ -294,7 +294,7 @@ async def get_event_timeline(vehicle_id: str, session: AsyncSession = Depends(ge
             "end_date": str(e.end_date),
             "post_count": e.post_count,
             "summary": e.summary,
-            "sentiment_distribution": json.loads(e.sentiment_distribution) if e.sentiment_distribution else None,
+            "sentiment_distribution": _safe_json_loads(e.sentiment_distribution),
         }
         for e in events
     ]

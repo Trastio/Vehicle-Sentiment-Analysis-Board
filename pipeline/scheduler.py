@@ -120,9 +120,10 @@ class CollectionScheduler:
     async def _resolve_urls(self, posts: list[dict]) -> list[dict]:
         for post in posts:
             url = post.get("url", "")
-            if "xhslink.com" in url:
+            if url:
                 note_id = await resolve_note_id(url)
-                post["resolved_note_id"] = note_id
+                if note_id != url.rsplit("/", 1)[-1].split("?")[0]:
+                    post["resolved_note_id"] = note_id
         return posts
 
     def _run_dedup(self, posts: list[dict]) -> list[dict]:
