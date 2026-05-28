@@ -103,6 +103,29 @@ async def _build_context(vehicle_id: str, anchor_type: str, anchor_data: dict, s
         event = anchor_data.get("event", "")
         context_parts.append(f"用户点击了事件分布图上的「{event}」事件")
         if event:
+            # Try EventGroup first for richer data
+            eg_result = await session.execute(
+                select(EventGroup).where(
+                    EventGroup.vehicle_id == vehicle_id,
+                    EventGroup.event_tag == event,
+                ).order_by(EventGroup.start_date.desc()).limit(1)
+            )
+            eg = eg_result.scalars().first()
+            if eg:
+                context_parts.append(
+                    f"事件组详情: {eg.start_date}~{eg.end_date}, "
+                    f"共{eg.post_count}篇帖子, 摘要: {eg.summary or '无'}"
+                )
+                if eg.sentiment_distribution:
+                    try:
+                        sd = json.loads(eg.sentiment_distribution)
+                        context_parts.append(
+                            f"情感分布: 正面={sd.get('positive', 0)}, "
+                            f"负面={sd.get('negative', 0)}, 中性={sd.get('neutral', 0)}"
+                        )
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
             all_analyzed = await session.execute(
                 select(AnalyzedPost).where(AnalyzedPost.vehicle_id == vehicle_id)
             )
@@ -112,13 +135,14 @@ async def _build_context(vehicle_id: str, anchor_type: str, anchor_data: dict, s
                 if event in tags:
                     matched_post_ids.append(ap.post_id)
             context_parts.append(f"该事件关联帖子数: {len(matched_post_ids)}")
-            if matched_post_ids:
+            if matched_post_ids and not eg:
                 sent_counts = {"positive": 0, "negative": 0, "neutral": 0}
                 for ap in all_analyzed.scalars().all():
                     tags = json.loads(ap.event_tags) if ap.event_tags else []
                     if event in tags:
                         sent_counts[ap.sentiment] = sent_counts.get(ap.sentiment, 0) + 1
                 context_parts.append(f"情感分布: 正面={sent_counts.get('positive',0)}, 负面={sent_counts.get('negative',0)}, 中性={sent_counts.get('neutral',0)}")
+            if matched_post_ids:
                 top = await session.execute(
                     select(RawPost).where(RawPost.id.in_(matched_post_ids))
                     .order_by((RawPost.likes + RawPost.comments + RawPost.shares).desc()).limit(3)

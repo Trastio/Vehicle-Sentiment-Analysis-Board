@@ -207,6 +207,10 @@
             <h3>{{ dialogAnchorType === 'trend' ? '趋势分析' : dialogAnchorType === 'platform' ? '平台分析' : dialogAnchorType === 'event' ? '事件分析' : dialogAnchorType === 'opinion' ? '观点分析' : '异常分析' }}</h3>
             <button @click="closeDialog" class="dialog-close">&times;</button>
         </div>
+        <div v-if="dialogAnchorType === 'event' && dialogAnchorData.event" class="event-anchor-card" style="margin: 12px 20px 0 20px;">
+            <span class="event-tag">{{ dialogAnchorData.event }}</span>
+            <div class="event-summary" v-if="dialogAnchorData.summary">{{ dialogAnchorData.summary }}</div>
+        </div>
         <div class="dialog-messages" ref="dialogMessages">
             <div v-for="msg in dialogMessages" :key="msg.id" :class="['dialog-msg', 'dialog-msg-' + msg.role]">
                 <div v-if="msg.role === 'user'" class="dialog-msg-content">{{ msg.content }}</div>
