@@ -15,7 +15,6 @@ async def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     from models.schemas import Base
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
 
 
