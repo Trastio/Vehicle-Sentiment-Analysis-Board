@@ -9,7 +9,7 @@ from pipeline.collectors.media_crawler import MediaCrawlerWrapper, PLATFORM_MAP,
 
 
 def _no_init(self):
-    pass
+    self._consecutive_failures = {}
 
 
 class TestIsAvailable:

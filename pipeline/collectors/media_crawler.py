@@ -35,12 +35,25 @@ DEALER_PATTERNS = re.compile(
 PlatformName = Literal["xiaohongshu", "weibo", "douyin", "kuaishou"]
 
 
+_MAX_CONSECUTIVE_FAILURES = 2
+
+
 class MediaCrawlerWrapper:
     def __init__(self):
         self._crawler_dir = Path(MEDIA_CRAWLER_DIR)
+        self._consecutive_failures: dict[str, int] = {}
 
     def is_available(self) -> bool:
         return (self._crawler_dir / "main.py").exists()
+
+    def _should_skip(self, platform: str) -> bool:
+        return self._consecutive_failures.get(platform, 0) >= _MAX_CONSECUTIVE_FAILURES
+
+    def _record_result(self, platform: str, success: bool):
+        if success:
+            self._consecutive_failures.pop(platform, None)
+        else:
+            self._consecutive_failures[platform] = self._consecutive_failures.get(platform, 0) + 1
 
     async def _run_crawler(self, keyword: str, platform: PlatformName) -> tuple[int, str]:
         """Run MediaCrawler subprocess. Returns (returncode, platform_code)."""
@@ -81,17 +94,23 @@ class MediaCrawlerWrapper:
         platform: PlatformName,
         max_notes: int = 50,
     ) -> list[dict]:
+        if self._should_skip(platform):
+            return []
         try:
             rc, code = await self._run_crawler(keyword, platform)
             if rc != 0:
+                self._record_result(platform, False)
                 return []
+            self._record_result(platform, True)
             results = self._read_results(code, keyword)
             logger.info("MediaCrawler %s: %d results for '%s'", platform, len(results), keyword)
             return results
         except asyncio.TimeoutError:
+            self._record_result(platform, False)
             logger.warning("MediaCrawler %s timed out for '%s'", platform, keyword)
             return []
         except Exception as e:
+            self._record_result(platform, False)
             logger.warning("MediaCrawler %s error: %s", platform, e)
             return []
 
@@ -224,10 +243,14 @@ class MediaCrawlerWrapper:
         max_notes: int = 50,
     ) -> tuple[list[dict], list[dict]]:
         """Like search() but returns comments as a separate list instead of appending to content."""
+        if self._should_skip(platform):
+            return [], []
         try:
             rc, code = await self._run_crawler(keyword, platform)
             if rc != 0:
+                self._record_result(platform, False)
                 return [], []
+            self._record_result(platform, True)
             results = self._read_results(code, keyword, enrich_comments=False)
             raw_comments = self._read_comments(code)
             comments = self._extract_comments(results, raw_comments, code)
@@ -238,9 +261,11 @@ class MediaCrawlerWrapper:
             )
             return results, comments
         except asyncio.TimeoutError:
+            self._record_result(platform, False)
             logger.warning("MediaCrawler %s timed out for '%s'", platform, keyword)
             return [], []
         except Exception as e:
+            self._record_result(platform, False)
             logger.warning("MediaCrawler %s error: %s", platform, e)
             return [], []
 

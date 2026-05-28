@@ -17,6 +17,8 @@ from pipeline.collectors.news_collector import NewsCollector
 
 logger = logging.getLogger(__name__)
 
+_MAX_EXPANDED_KEYWORDS = 5
+
 
 class CollectionScheduler:
     def __init__(self, session: AsyncSession):
@@ -113,6 +115,8 @@ class CollectionScheduler:
         )
         titles = [row[0] for row in news_result.all() if row[0]]
         expanded = await expand_keywords(vehicle.name, keywords, titles)
+        if len(expanded) > _MAX_EXPANDED_KEYWORDS:
+            expanded = expanded[:_MAX_EXPANDED_KEYWORDS]
         vehicle.expanded_keywords = json.dumps(expanded, ensure_ascii=False)
         await self._session.commit()
         return expanded
