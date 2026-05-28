@@ -1,6 +1,6 @@
 function parseGenerativeUI(text) {
     if (!text) return "";
-    const uiTypes = ["text", "chart", "table", "stat_cards", "post_list"];
+    const uiTypes = ["text", "chart", "table", "stat_cards", "post_list", "event"];
     let html = text;
 
     uiTypes.forEach(function(type) {
@@ -55,6 +55,24 @@ function parseGenerativeUI(text) {
                     return listHtml;
                 } catch (e) {
                     return "<div class='gen-ui-error'>Post list render error</div>";
+                }
+            }
+            if (type === "event") {
+                try {
+                    const events = JSON.parse(content);
+                    var eventsHtml = "<div class='gen-ui-events'>";
+                    events.forEach(function(ev) {
+                        eventsHtml += "<div class='event-card'>"
+                            + "<span class='event-tag'>" + (ev.event_tag || "") + "</span>"
+                            + "<span class='event-date'>" + (ev.start_date || "") + " ~ " + (ev.end_date || "") + "</span>"
+                            + "<span class='event-count'>" + (ev.post_count || 0) + "篇帖子</span>"
+                            + (ev.summary ? "<p class='event-summary'>" + ev.summary + "</p>" : "")
+                            + "</div>";
+                    });
+                    eventsHtml += "</div>";
+                    return eventsHtml;
+                } catch (e) {
+                    return "<div class='gen-ui-error'>Event render error</div>";
                 }
             }
             return match;

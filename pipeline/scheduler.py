@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import uuid
@@ -7,11 +8,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.schemas import CollectionStatus, HeatMetric, RawPost, Vehicle
+from pipeline.analysis.deduplicator import deduplicate, resolve_note_id
+from pipeline.collectors.full_text_crawler import crawl_full_text
 from pipeline.collectors.gopup_collector import GopupCollector
+from pipeline.collectors.keyword_expander import expand_keywords, expand_keywords_for_vehicle
 from pipeline.collectors.media_crawler import MediaCrawlerWrapper
 from pipeline.collectors.news_collector import NewsCollector
 
 logger = logging.getLogger(__name__)
+
+_MAX_EXPANDED_KEYWORDS = 5
+_CRAWL_CONCURRENCY = 5
 
 
 class CollectionScheduler:
@@ -45,21 +52,93 @@ class CollectionScheduler:
 
     async def _run_collectors(self, keyword: str, start_date: str, end_date: str, vehicle_id: str) -> list[dict]:
         logger.info("Collecting keyword='%s', range=%s to %s", keyword, start_date, end_date)
-        results = []
-        news_posts = await self._news.search_all(keyword, start_date, end_date)
-        results.extend(news_posts)
+        coros, labels = [], []
+
+        coros.append(self._news.search_all(keyword, start_date, end_date))
+        labels.append("news")
 
         if self._media.is_available():
-            for platform in ["xiaohongshu", "bilibili", "zhihu", "weibo", "douyin", "kuaishou", "tieba"]:
-                posts = await self._media.search(keyword, platform)
-                results.extend(posts)
+            for platform in ["xiaohongshu", "weibo", "douyin", "kuaishou"]:
+                coros.append(self._media.search(keyword, platform))
+                labels.append(platform)
 
-        baidu_index = await self._gopup.collect_baidu_index(keyword, start_date, end_date)
-        await self._store_index_data(vehicle_id, baidu_index)
+        coros.append(self._gopup.collect_baidu_index(keyword, start_date, end_date))
+        labels.append("baidu_index")
 
-        index_total = len(baidu_index)
-        logger.info("Collection done for '%s': %d posts, %d index points", keyword, len(results), index_total)
-        return results
+        raw = await asyncio.gather(*coros, return_exceptions=True)
+
+        posts = []
+        for label, result in zip(labels, raw):
+            if isinstance(result, Exception):
+                logger.warning("Collector '%s' error: %s", label, result)
+                continue
+            if label == "baidu_index":
+                await self._store_index_data(vehicle_id, result)
+                logger.info("Baidu index: %d points for '%s'", len(result), keyword)
+            elif isinstance(result, list):
+                posts.extend(result)
+
+        logger.info("Collection done for '%s': %d posts", keyword, len(posts))
+        return posts
+
+    async def _crawl_full_texts(self, posts: list[dict]) -> list[dict]:
+        sem = asyncio.Semaphore(_CRAWL_CONCURRENCY)
+        crawl_jobs = []
+
+        async def _limited_crawl(url: str, snippet: str):
+            async with sem:
+                return await crawl_full_text(url, snippet)
+
+        for post in posts:
+            if post.get("source") in ("bocha", "anspire", "news") and post.get("url"):
+                crawl_jobs.append(_limited_crawl(post["url"], post.get("content", "")))
+            else:
+                crawl_jobs.append(None)
+        results = await asyncio.gather(*(j for j in crawl_jobs if j is not None), return_exceptions=True)
+        ri = 0
+        for i, post in enumerate(posts):
+            if crawl_jobs[i] is None:
+                continue
+            if isinstance(results[ri], Exception):
+                ri += 1
+                continue
+            crawl_result = results[ri]
+            ri += 1
+            if crawl_result and crawl_result.get("full_text"):
+                post["full_content"] = crawl_result["full_text"]
+        return posts
+
+    async def _expand_keywords_if_needed(self, vehicle: Vehicle) -> list[str]:
+        keywords = json.loads(vehicle.search_keywords) if vehicle.search_keywords else [vehicle.name]
+        if not expand_keywords_for_vehicle(vehicle):
+            if vehicle.expanded_keywords:
+                try:
+                    return json.loads(vehicle.expanded_keywords)
+                except json.JSONDecodeError:
+                    return keywords
+            return keywords
+        news_result = await self._session.execute(
+            select(RawPost.title).where(RawPost.vehicle_id == vehicle.id).limit(20)
+        )
+        titles = [row[0] for row in news_result.all() if row[0]]
+        expanded = await expand_keywords(vehicle.name, keywords, titles)
+        if len(expanded) > _MAX_EXPANDED_KEYWORDS:
+            expanded = expanded[:_MAX_EXPANDED_KEYWORDS]
+        vehicle.expanded_keywords = json.dumps(expanded, ensure_ascii=False)
+        await self._session.commit()
+        return expanded
+
+    async def _resolve_urls(self, posts: list[dict]) -> list[dict]:
+        for post in posts:
+            url = post.get("url", "")
+            if url:
+                note_id = await resolve_note_id(url)
+                if note_id != url.rsplit("/", 1)[-1].split("?")[0]:
+                    post["resolved_note_id"] = note_id
+        return posts
+
+    def _run_dedup(self, posts: list[dict]) -> list[dict]:
+        return deduplicate(posts)
 
     async def _store_index_data(self, vehicle_id: str, *data_sets: list[dict]):
         for data_set in data_sets:
@@ -118,6 +197,7 @@ class CollectionScheduler:
                 likes=post.get("likes", 0),
                 comments=post.get("comments", 0),
                 shares=post.get("shares", 0),
+                full_content=post.get("full_content"),
             ))
             count += 1
 
@@ -159,7 +239,8 @@ class CollectionScheduler:
             mode, last_collected = await self._determine_mode(vehicle_id)
             date_ranges = self._get_date_ranges(mode, last_collected)
             logger.info("开始采集 vehicle=%s mode=%s ranges=%d", vehicle.name, mode, len(date_ranges))
-            keywords = json.loads(vehicle.search_keywords) if vehicle.search_keywords else [vehicle.name]
+
+            keywords = await self._expand_keywords_if_needed(vehicle)
 
             all_posts: list[dict] = []
             for keyword in keywords:
@@ -167,6 +248,9 @@ class CollectionScheduler:
                     posts = await self._run_collectors(keyword, start, end, vehicle_id)
                     all_posts.extend(posts)
 
+            all_posts = await self._crawl_full_texts(all_posts)
+            all_posts = await self._resolve_urls(all_posts)
+            all_posts = self._run_dedup(all_posts)
             stored = await self._store_posts(vehicle_id, all_posts)
             await self._update_status(vehicle_id, mode, stored)
             logger.info("采集完成: %d posts stored for %s", stored, vehicle.name)

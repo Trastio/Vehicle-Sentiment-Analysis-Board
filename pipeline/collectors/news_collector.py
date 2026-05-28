@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 
 import httpx
 
@@ -25,6 +26,23 @@ def _dedup_key(item: dict) -> str:
     return hashlib.md5(item.get("title", "").encode()).hexdigest()
 
 
+_CONFIG_URL_PATTERNS = re.compile(
+    r"/config|/parameter|/dealer|pk\.16888\.com|/compare|/art\.html$|carsbooks\.com",
+    re.IGNORECASE,
+)
+
+
+def _is_config_page(item: dict) -> bool:
+    url = item.get("url", "")
+    if _CONFIG_URL_PATTERNS.search(url):
+        return True
+    title = item.get("title", "")
+    config_title_words = ["参数配置", "配置及参数", "车型对比"]
+    if any(w in title for w in config_title_words):
+        return True
+    return False
+
+
 class NewsCollector:
     def __init__(self):
         secrets = _load_api_keys()
@@ -34,7 +52,6 @@ class NewsCollector:
 
     async def search_all(self, keyword: str, start_date: str, end_date: str) -> list[dict]:
         results = await asyncio.gather(
-            self.search_tavily(keyword, start_date, end_date),
             self.search_bocha(keyword, start_date, end_date),
             self.search_anspire(keyword, start_date, end_date),
             return_exceptions=True,
@@ -44,11 +61,13 @@ class NewsCollector:
             if isinstance(result, Exception):
                 continue
             for item in result:
+                if _is_config_page(item):
+                    continue
                 key = _dedup_key(item)
                 if key not in seen:
                     seen.add(key)
                     all_items.append(item)
-        all_items.sort(key=lambda x: x.get("published_at", ""), reverse=True)
+        all_items.sort(key=lambda x: x.get("published_at") or "", reverse=True)
         logger.info("search_all returned %d results for '%s'", len(all_items), keyword)
         return all_items
 
@@ -57,11 +76,19 @@ class NewsCollector:
             return []
         try:
             logger.debug("Tavily request: keyword=%s, start=%s, end=%s", keyword, start_date, end_date)
+            query = f"{keyword} 汽车测评"
+            include_domains = [
+                "autohome.com.cn", "dongchedi.com", "yiche.com",
+                "zhihu.com", "toutiao.com", "pcauto.com.cn",
+                "xcar.com.cn", "auto.sohu.com", "auto.qq.com",
+                "36kr.com", "ithome.com", "bilibili.com",
+            ]
             async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.post("https://api.tavily.com/search", json={
-                    "api_key": self._tavily_key, "query": keyword, "topic": "news",
-                    "search_depth": "basic", "max_results": 20,
+                    "api_key": self._tavily_key, "query": query, "topic": "news",
+                    "search_depth": "basic", "max_results": 30,
                     "start_date": start_date, "end_date": end_date,
+                    "include_domains": include_domains,
                 })
                 resp.raise_for_status()
                 data = resp.json()

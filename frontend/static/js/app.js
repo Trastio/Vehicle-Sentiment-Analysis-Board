@@ -9,6 +9,8 @@ createApp({
             trendData: [],
             platformDist: [],
             eventDist: [],
+            opinionDist: [],
+            competitorData: [],
             anomalies: [],
             posts: { items: [], total: 0, page: 1, size: 20 },
             reports: [],
@@ -22,14 +24,31 @@ createApp({
             dialogMessages: [],
             dialogConversationId: null,
             dialogInput: "",
+            pipelinePhase: "idle",
+            pipelineInfo: {},
+            pipelinePollTimer: null,
+            // Search combobox
+            searchQuery: "",
+            searchResults: [],
+            searchDebounceTimer: null,
+            // Group
+            groups: [],
+            currentGroupId: "",
+            groupOverview: {},
+            showAddGroupModal: false,
+            newGroup: { name: "", description: "" },
         };
     },
     async mounted() {
         await this.fetchVehicles();
+        await this.loadGroups();
         window.addEventListener("resize", () => {
             this.trendChart?.resize();
             this.platformChart?.resize();
             this.eventChart?.resize();
+            this.opinionChart?.resize();
+            this.competitorChart?.resize();
+            this.groupComparisonChart?.resize();
         });
     },
     methods: {
@@ -57,6 +76,8 @@ createApp({
                 this.loadTrend(),
                 this.loadPlatformDist(),
                 this.loadEventDist(),
+                this.loadOpinionTop(),
+                this.loadCompetitorComparison(),
                 this.loadAnomalies(),
                 this.loadPosts(1),
                 this.loadReports(),
@@ -88,7 +109,7 @@ createApp({
             });
             chart.on("click", (params) => {
                 if (params.name) {
-                    openDialog(anchorType, anchorType === "event" ? { event: params.name } : { [anchorType === "platform" ? "platform" : "date"]: params.name });
+                    openDialog(anchorType, anchorType === "event" ? { event: params.name } : anchorType === "opinion" ? { opinion: params.name } : { [anchorType === "platform" ? "platform" : "date"]: params.name });
                 }
             });
         },
@@ -96,19 +117,24 @@ createApp({
             const el = document.getElementById("trend-chart");
             if (!el) return;
             if (!this.trendChart) this.trendChart = echarts.init(el);
-            const dates = this.trendData.map(d => d.date);
+            const raw = this.trendData.data || this.trendData;
+            const dates = raw.map(d => d.date);
             this.trendChart.setOption({
                 tooltip: { trigger: "axis" },
-                legend: { data: ["讨论声量", "媒体声量", "互动烈度"] },
+                legend: { data: ["讨论声量", "媒体声量", "互动烈度", "注意力指数"] },
                 xAxis: { type: "category", data: dates },
-                yAxis: { type: "value" },
+                yAxis: [
+                    { type: "value", name: "声量/互动" },
+                    { type: "value", name: "百度指数", position: "right" },
+                ],
                 dataZoom: [{ type: "inside" }],
                 series: [
-                    { name: "讨论声量", type: "line", data: this.trendData.map(d => d.discussion_volume), smooth: true },
-                    { name: "媒体声量", type: "line", data: this.trendData.map(d => d.media_volume), smooth: true },
-                    { name: "互动烈度", type: "line", data: this.trendData.map(d => d.interaction_intensity), smooth: true },
+                    { name: "讨论声量", type: "line", data: raw.map(d => d.discussion_volume), smooth: true },
+                    { name: "媒体声量", type: "line", data: raw.map(d => d.media_volume), smooth: true },
+                    { name: "互动烈度", type: "line", data: raw.map(d => d.interaction_intensity), smooth: true },
+                    { name: "注意力指数", type: "line", yAxisIndex: 1, data: raw.map(d => d.attention_index), smooth: true, lineStyle: { type: "dashed" } },
                 ],
-            });
+            }, true);
             this.bindChartClick(this.trendChart, "trend");
         },
         async loadPlatformDist() {
@@ -126,7 +152,7 @@ createApp({
                     type: "pie", radius: ["40%", "70%"],
                     data: this.platformDist.map(d => ({ name: d.platform, value: d.count })),
                 }],
-            });
+            }, true);
             this.bindChartClick(this.platformChart, "platform");
         },
         async loadEventDist() {
@@ -144,8 +170,50 @@ createApp({
                 xAxis: { type: "category", data: data.map(d => d[0]), axisLabel: { rotate: 30 } },
                 yAxis: { type: "value" },
                 series: [{ type: "bar", data: data.map(d => d[1]) }],
-            });
+            }, true);
             this.bindChartClick(this.eventChart, "event");
+        },
+        async loadOpinionTop() {
+            const resp = await fetch(`/api/analysis/top-opinions/${this.currentVehicleId}`);
+            this.opinionDist = await resp.json();
+            this.renderOpinionChart();
+        },
+        renderOpinionChart() {
+            const el = document.getElementById("opinion-chart");
+            if (!el) return;
+            if (!this.opinionChart) this.opinionChart = echarts.init(el);
+            const data = (this.opinionDist || []).slice(0, 10).reverse();
+            this.opinionChart.setOption({
+                tooltip: {},
+                xAxis: { type: "value" },
+                yAxis: { type: "category", data: data.map(d => d[0]) },
+                series: [{ type: "bar", data: data.map(d => d[1]), itemStyle: { color: "#5470c6" } }],
+            }, true);
+            this.bindChartClick(this.opinionChart, "opinion");
+        },
+        async loadCompetitorComparison() {
+            const resp = await fetch(`/api/dashboard/competitor-comparison/${this.currentVehicleId}`);
+            this.competitorData = await resp.json();
+            if (this.competitorData.length > 1) {
+                this.renderCompetitorChart();
+            }
+        },
+        renderCompetitorChart() {
+            const el = document.getElementById("competitor-chart");
+            if (!el) return;
+            if (!this.competitorChart) this.competitorChart = echarts.init(el);
+            const names = this.competitorData.map(d => d.name);
+            this.competitorChart.setOption({
+                tooltip: {},
+                legend: { data: ["正面", "负面", "中性"] },
+                xAxis: { type: "category", data: names },
+                yAxis: { type: "value" },
+                series: [
+                    { name: "正面", type: "bar", stack: "sentiment", data: this.competitorData.map(d => d.positive), itemStyle: { color: "#67c23a" } },
+                    { name: "负面", type: "bar", stack: "sentiment", data: this.competitorData.map(d => d.negative), itemStyle: { color: "#f56c6c" } },
+                    { name: "中性", type: "bar", stack: "sentiment", data: this.competitorData.map(d => d.neutral), itemStyle: { color: "#909399" } },
+                ],
+            }, true);
         },
         async loadAnomalies() {
             const end = new Date().toISOString().slice(0, 10);
@@ -166,18 +234,178 @@ createApp({
         },
         async triggerCollection() {
             this.loading = true;
-            await fetch(`/api/vehicles/${this.currentVehicleId}/collect`, { method: "POST" });
-            this.loading = false;
-            await this.onVehicleChange();
+            this.pipelinePhase = "collecting";
+            const resp = await fetch(`/api/vehicles/${this.currentVehicleId}/collect`, { method: "POST" });
+            const data = await resp.json();
+            if (data.status === "already_running") {
+                this.pipelinePhase = data.phase;
+            }
+            this._startPolling();
         },
         async triggerAnalysis() {
             this.loading = true;
-            await fetch(`/api/analysis/trigger/${this.currentVehicleId}`, { method: "POST" });
-            this.loading = false;
-            await this.onVehicleChange();
+            this.pipelinePhase = "analyzing";
+            const resp = await fetch(`/api/analysis/trigger/${this.currentVehicleId}`, { method: "POST" });
+            const data = await resp.json();
+            if (data.status === "already_running") {
+                this.pipelinePhase = data.phase;
+            }
+            this._startPolling();
+        },
+        _startPolling() {
+            if (this.pipelinePollTimer) clearInterval(this.pipelinePollTimer);
+            this.pipelinePollTimer = setInterval(() => this._pollPipeline(), 3000);
+            this._pollPipeline();
+        },
+        async _pollPipeline() {
+            try {
+                const resp = await fetch(`/api/vehicles/${this.currentVehicleId}/pipeline-status`);
+                if (!resp.ok) return;
+                const data = await resp.json();
+                this.pipelinePhase = data.phase;
+                this.pipelineInfo = data;
+
+                if (data.phase === "completed" || data.phase === "error") {
+                    clearInterval(this.pipelinePollTimer);
+                    this.pipelinePollTimer = null;
+                    this.loading = false;
+                    if (data.phase === "completed") {
+                        await this.onVehicleChange();
+                    }
+                }
+            } catch (e) {
+                // keep polling on network error
+            }
         },
         closeDialog() {
             closeDialog();
+        },
+        // --- Search Combobox ---
+        onSearchInput() {
+            clearTimeout(this.searchDebounceTimer);
+            const q = this.searchQuery.trim();
+            if (!q) {
+                this.searchResults = [];
+                return;
+            }
+            this.searchDebounceTimer = setTimeout(async () => {
+                try {
+                    const resp = await fetch(`/api/vehicles/search?q=${encodeURIComponent(q)}`);
+                    if (resp.ok) {
+                        this.searchResults = await resp.json();
+                    }
+                } catch (e) {}
+            }, 300);
+        },
+        onSearchFocus() {
+            if (this.searchQuery.trim() && this.searchResults.length) {
+                // results already visible via v-if
+            }
+        },
+        onSearchBlur() {
+            // small delay so mousedown on item fires first
+            setTimeout(() => { this.searchResults = []; }, 200);
+        },
+        selectVehicle(v) {
+            this.currentVehicleId = v.id;
+            this.searchQuery = `${v.name} (${v.brand})`;
+            this.searchResults = [];
+            this.currentGroupId = "";
+            this.groupOverview = {};
+            this.onVehicleChange();
+        },
+        // --- Group ---
+        async loadGroups() {
+            try {
+                const resp = await fetch("/api/groups");
+                if (resp.ok) {
+                    this.groups = await resp.json();
+                }
+            } catch (e) {}
+        },
+        async onGroupChange() {
+            const groupId = this.currentGroupId;
+            if (!groupId) {
+                this.groupOverview = {};
+                return;
+            }
+            // clear single-vehicle mode
+            this.currentVehicleId = "";
+            this.searchQuery = "";
+            try {
+                const resp = await fetch(`/api/groups/${groupId}`);
+                if (!resp.ok) return;
+                const group = await resp.json();
+                // Build overview: fetch each vehicle's overview in parallel
+                const vehiclePromises = (group.vehicle_ids || []).map(async (vid) => {
+                    try {
+                        const r = await fetch(`/api/dashboard/overview/${vid}`);
+                        if (!r.ok) return { id: vid, name: vid, post_count: 0 };
+                        const data = await r.json();
+                        // fetch vehicle name
+                        const vr = await fetch(`/api/vehicles/${vid}`);
+                        const vinfo = vr.ok ? await vr.json() : {};
+                        return {
+                            id: vid,
+                            name: vinfo.name || vid,
+                            post_count: data.total_posts || 0,
+                            positive: data.positive || 0,
+                            negative: data.negative || 0,
+                            neutral: data.neutral || 0,
+                            health_score: data.health_score || "-",
+                        };
+                    } catch (e) {
+                        return { id: vid, name: vid, post_count: 0 };
+                    }
+                });
+                const vehicles = await Promise.all(vehiclePromises);
+                this.groupOverview = {
+                    name: group.name,
+                    vehicles: vehicles,
+                };
+                this.$nextTick(() => {
+                    this.renderGroupComparisonChart();
+                });
+            } catch (e) {}
+        },
+        selectGroupVehicle(vehicleId) {
+            this.currentGroupId = "";
+            this.groupOverview = {};
+            this.currentVehicleId = vehicleId;
+            // fetch vehicle name for display
+            const gv = this.groupOverview.vehicles?.find(v => v.id === vehicleId);
+            this.searchQuery = gv ? gv.name : "";
+            this.onVehicleChange();
+        },
+        renderGroupComparisonChart() {
+            const el = document.getElementById("group-comparison-chart");
+            if (!el) return;
+            const vlist = this.groupOverview.vehicles || [];
+            if (vlist.length < 1) return;
+            if (!this.groupComparisonChart) this.groupComparisonChart = echarts.init(el);
+            this.groupComparisonChart.setOption({
+                tooltip: {},
+                legend: { data: ["正面", "负面", "中性"] },
+                xAxis: { type: "category", data: vlist.map(v => v.name) },
+                yAxis: { type: "value" },
+                series: [
+                    { name: "正面", type: "bar", stack: "sentiment", data: vlist.map(v => v.positive || 0), itemStyle: { color: "#67c23a" } },
+                    { name: "负面", type: "bar", stack: "sentiment", data: vlist.map(v => v.negative || 0), itemStyle: { color: "#f56c6c" } },
+                    { name: "中性", type: "bar", stack: "sentiment", data: vlist.map(v => v.neutral || 0), itemStyle: { color: "#909399" } },
+                ],
+            }, true);
+        },
+        async addGroup() {
+            const resp = await fetch("/api/groups", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(this.newGroup),
+            });
+            if (resp.ok) {
+                this.showAddGroupModal = false;
+                this.newGroup = { name: "", description: "" };
+                await this.loadGroups();
+            }
         },
         renderGenerativeUI(content) {
             return parseGenerativeUI(content);

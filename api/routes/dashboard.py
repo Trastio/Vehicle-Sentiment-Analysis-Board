@@ -6,7 +6,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import get_session
-from models.schemas import AnalyzedPost, AnomalyEvent, HeatMetric, RawPost, Report, Vehicle
+from models.schemas import AnalyzedPost, AnomalyEvent, EventGroup, HeatMetric, RawPost, Report, Vehicle
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -57,12 +57,30 @@ async def get_overview(vehicle_id: str, session: AsyncSession = Depends(get_sess
     )
     week_total = week_result.scalar() or 0
 
+    two_weeks_ago = (date.today() - timedelta(days=14)).isoformat()
+    prev_week_result = await session.execute(
+        select(func.count(RawPost.id)).where(
+            RawPost.vehicle_id == vehicle_id,
+            RawPost.published_at >= two_weeks_ago,
+            RawPost.published_at < week_ago,
+        )
+    )
+    prev_week_total = prev_week_result.scalar() or 0
+
+    if prev_week_total > 0:
+        week_change_rate = round((week_total - prev_week_total) / prev_week_total * 100, 1)
+    elif week_total > 0:
+        week_change_rate = 100.0
+    else:
+        week_change_rate = None
+
     lifecycle_anchors = _safe_json_loads(vehicle.lifecycle_anchors)
 
     return {
         "total_posts": total,
         "positive": pos, "negative": neg, "neutral": neu,
-        "week_change": week_total,
+        "week_total": week_total,
+        "week_change_rate": week_change_rate,
         "health_score": health_score,
         "lifecycle_anchors": lifecycle_anchors,
     }
@@ -167,7 +185,7 @@ async def get_anomaly_timeline(
 async def get_posts(
     vehicle_id: str,
     page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100),
-    sentiment: str = Query(None), platform: str = Query(None),
+    sentiment: str | None = Query(None), platform: str | None = Query(None),
     session: AsyncSession = Depends(get_session),
 ):
     await _get_vehicle_or_404(vehicle_id, session)
@@ -225,4 +243,58 @@ async def get_reports(vehicle_id: str, session: AsyncSession = Depends(get_sessi
             "created_at": r.created_at.isoformat() if r.created_at else None,
         }
         for r in reports
+    ]
+
+
+@router.get("/competitor-comparison/{vehicle_id}")
+async def get_competitor_comparison(vehicle_id: str, session: AsyncSession = Depends(get_session)):
+    vehicle = await _get_vehicle_or_404(vehicle_id, session)
+    competitor_ids = _safe_json_loads(vehicle.competitor_ids)
+    if not isinstance(competitor_ids, list) or not competitor_ids:
+        return []
+
+    all_ids = [vehicle_id] + competitor_ids
+    vehicles_result = await session.execute(
+        select(Vehicle).where(Vehicle.id.in_(all_ids))
+    )
+    vehicles_map = {v.id: v.name for v in vehicles_result.scalars().all()}
+
+    result = []
+    for vid in all_ids:
+        name = vehicles_map.get(vid, "未知")
+        sent_result = await session.execute(
+            select(AnalyzedPost.sentiment, func.count(AnalyzedPost.id))
+            .where(AnalyzedPost.vehicle_id == vid)
+            .group_by(AnalyzedPost.sentiment)
+        )
+        counts = {row[0]: row[1] for row in sent_result.all()}
+        result.append({
+            "name": name,
+            "vehicle_id": vid,
+            "positive": counts.get("positive", 0),
+            "negative": counts.get("negative", 0),
+            "neutral": counts.get("neutral", 0),
+        })
+    return result
+
+
+@router.get("/vehicles/{vehicle_id}/events")
+async def get_event_timeline(vehicle_id: str, session: AsyncSession = Depends(get_session)):
+    result = await session.execute(
+        select(EventGroup).where(
+            EventGroup.vehicle_id == vehicle_id
+        ).order_by(EventGroup.start_date.desc())
+    )
+    events = result.scalars().all()
+    return [
+        {
+            "id": e.id,
+            "event_tag": e.event_tag,
+            "start_date": str(e.start_date),
+            "end_date": str(e.end_date),
+            "post_count": e.post_count,
+            "summary": e.summary,
+            "sentiment_distribution": _safe_json_loads(e.sentiment_distribution),
+        }
+        for e in events
     ]
