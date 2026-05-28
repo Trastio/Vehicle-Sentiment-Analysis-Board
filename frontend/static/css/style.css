@@ -66,6 +66,72 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
     .analysis-row { grid-template-columns: 1fr; }
 }
 
+/* Search Combobox */
+.search-combobox {
+    position: relative;
+    display: inline-block;
+    width: 220px;
+}
+.search-combobox input {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 14px;
+}
+.combobox-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-top: none;
+    border-radius: 0 0 6px 6px;
+    max-height: 240px;
+    overflow-y: auto;
+    z-index: 100;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+.combobox-item {
+    padding: 8px 12px;
+    cursor: pointer;
+    font-size: 14px;
+}
+.combobox-item:hover {
+    background: #f0f7ff;
+}
+.combobox-item:first-child {
+    padding-top: 10px;
+}
+.combobox-item:last-child {
+    padding-bottom: 10px;
+}
+
+/* Group View */
+.group-overview {
+    display: flex;
+    gap: 12px;
+    margin: 12px 0;
+    flex-wrap: wrap;
+}
+.group-card {
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 14px 16px;
+    min-width: 160px;
+    text-align: center;
+    cursor: pointer;
+    transition: box-shadow 0.2s, border-color 0.2s;
+}
+.group-card:hover {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    border-color: #1677ff;
+}
+.group-card h4 { margin: 0 0 8px; font-size: 15px; }
+.group-card .count { font-size: 24px; font-weight: bold; color: #1890ff; }
+.group-card .card-label { font-size: 12px; color: #888; }
+
 .dialog-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 200; }
 .dialog-panel { position: fixed; top: 0; right: -480px; width: 480px; height: 100vh; background: #fff; box-shadow: -4px 0 20px rgba(0,0,0,0.1); z-index: 201; display: flex; flex-direction: column; transition: right 0.3s ease; }
 .dialog-panel-open { right: 0; }
@@ -93,6 +159,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .gen-ui-post strong { font-size: 13px; }
 .gen-ui-post p { font-size: 12px; color: #666; margin-top: 4px; }
 .gen-ui-error { color: #ff4d4f; font-size: 12px; }
+
+.pipeline-status { font-size: 13px; color: #1677ff; animation: pulse 1.5s infinite; }
+.pipeline-done { color: #52c41a; animation: none; }
+.pipeline-error { color: #ff4d4f; animation: none; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
 @media (max-width: 600px) {
     .dialog-panel { width: 100%; right: -100%; }

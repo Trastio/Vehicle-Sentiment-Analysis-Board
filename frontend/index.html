@@ -13,15 +13,53 @@
     <header class="header">
         <h1>车型舆情监控</h1>
         <div class="header-actions">
-            <select v-model="currentVehicleId" @change="onVehicleChange" class="vehicle-select">
-                <option value="">选择车型</option>
-                <option v-for="v in vehicles" :key="v.id" :value="v.id">{{ v.name }} ({{ v.brand }})</option>
+            <!-- Search Combobox -->
+            <div class="search-combobox" id="vehicleCombobox">
+                <input type="text" id="vehicleSearch" placeholder="搜索车型..." autocomplete="off"
+                       v-model="searchQuery" @input="onSearchInput" @focus="onSearchFocus"
+                       @blur="onSearchBlur">
+                <div class="combobox-dropdown" id="vehicleDropdown" v-if="searchResults.length">
+                    <div v-for="v in searchResults" :key="v.id" class="combobox-item"
+                         @mousedown.prevent="selectVehicle(v)">{{ v.name }} ({{ v.brand }})</div>
+                </div>
+            </div>
+            <!-- Group Dropdown -->
+            <select id="groupSelect" v-model="currentGroupId" @change="onGroupChange" class="vehicle-select">
+                <option value="">-- 选择分组 --</option>
+                <option v-for="g in groups" :key="g.id" :value="g.id">{{ g.name }} ({{ g.vehicle_ids.length }}车型)</option>
             </select>
+            <button @click="showAddGroupModal = true" class="btn" title="新建分组">+ 分组</button>
             <button @click="showAddModal = true" class="btn btn-primary">添加车型</button>
             <button @click="triggerCollection" :disabled="!currentVehicleId || loading" class="btn">采集</button>
             <button @click="triggerAnalysis" :disabled="!currentVehicleId || loading" class="btn">分析</button>
+            <span v-if="pipelinePhase === 'collecting'" class="pipeline-status">采集中...</span>
+            <span v-if="pipelinePhase === 'analyzing'" class="pipeline-status">分析中 ({{ pipelineInfo.analyzed || 0 }})...</span>
+            <span v-if="pipelinePhase === 'calculating'" class="pipeline-status">计算热度...</span>
+            <span v-if="pipelinePhase === 'completed'" class="pipeline-status pipeline-done">完成</span>
+            <span v-if="pipelinePhase === 'error'" class="pipeline-status pipeline-error">出错了</span>
         </div>
     </header>
+
+    <!-- 分组概览 Group Overview -->
+    <section v-if="currentGroupId && groupOverview.vehicles" class="section">
+        <h2>{{ groupOverview.name }} — 分组概览</h2>
+        <div class="group-overview">
+            <div v-for="gv in groupOverview.vehicles" :key="gv.id" class="group-card" @click="selectGroupVehicle(gv.id)">
+                <h4>{{ gv.name }}</h4>
+                <div class="count">{{ gv.post_count || 0 }}</div>
+                <div class="card-label">舆情总量</div>
+                <div style="margin-top:6px;">
+                    <span class="card-positive" style="margin-right:6px;">正 {{ gv.positive || 0 }}</span>
+                    <span class="card-negative" style="margin-right:6px;">负 {{ gv.negative || 0 }}</span>
+                    <span class="card-neutral">中 {{ gv.neutral || 0 }}</span>
+                </div>
+            </div>
+        </div>
+        <div v-if="groupOverview.vehicles.length > 1" class="section" style="margin-top:16px;">
+            <h3>分组对比</h3>
+            <div id="group-comparison-chart" class="chart-sm"></div>
+        </div>
+    </section>
 
     <!-- 概览区 Overview Cards -->
     <section v-if="currentVehicleId" class="section overview">
@@ -32,6 +70,17 @@
             <div class="card card-negative"><div class="card-value">{{ overview.negative || 0 }}</div><div class="card-label">负面</div></div>
             <div class="card card-neutral"><div class="card-value">{{ overview.neutral || 0 }}</div><div class="card-label">中性</div></div>
             <div class="card"><div class="card-value">{{ overview.health_score || '-' }}</div><div class="card-label">健康度</div></div>
+            <div class="card">
+                <div class="card-value">
+                    <span v-if="overview.week_change_rate !== null && overview.week_change_rate !== undefined">
+                        <span :class="overview.week_change_rate >= 0 ? 'trend-up' : 'trend-down'">
+                            {{ overview.week_change_rate >= 0 ? '↑' : '↓' }} {{ Math.abs(overview.week_change_rate) }}%
+                        </span>
+                    </span>
+                    <span v-else>-</span>
+                </div>
+                <div class="card-label">周变化</div>
+            </div>
         </div>
     </section>
 
@@ -41,7 +90,7 @@
         <div id="trend-chart" class="chart-container"></div>
     </section>
 
-    <!-- 分析区 Analysis -->
+    <!-- 分析区 Analysis (3 columns) -->
     <section v-if="currentVehicleId" class="section analysis-row">
         <div class="analysis-col">
             <h3>平台声量分布</h3>
@@ -52,6 +101,14 @@
             <div id="event-chart" class="chart-sm"></div>
         </div>
         <div class="analysis-col">
+            <h3>观点 TOP10</h3>
+            <div id="opinion-chart" class="chart-sm"></div>
+        </div>
+    </section>
+
+    <!-- 异常与竞品区 -->
+    <section v-if="currentVehicleId" class="section analysis-row">
+        <div class="analysis-col">
             <h3>异常时间线</h3>
             <div class="anomaly-list">
                 <div v-for="a in anomalies" :key="a.id" class="anomaly-item" :class="a.event_type">
@@ -61,6 +118,10 @@
                 </div>
                 <div v-if="!anomalies.length" class="empty">暂无异常</div>
             </div>
+        </div>
+        <div class="analysis-col" v-if="competitorData.length > 1">
+            <h3>竞品对比</h3>
+            <div id="competitor-chart" class="chart-sm"></div>
         </div>
     </section>
 
@@ -78,7 +139,9 @@
                 <option value="">全部平台</option>
                 <option value="news">新闻</option>
                 <option value="xhs">小红书</option>
-                <option value="bili">B站</option>
+                <option value="wb">微博</option>
+                <option value="dy">抖音</option>
+                <option value="ks">快手</option>
             </select>
         </div>
         <table class="posts-table">
@@ -124,11 +187,24 @@
         </div>
     </div>
 
+    <!-- 添加分组 Modal -->
+    <div v-if="showAddGroupModal" class="modal-overlay" @click.self="showAddGroupModal = false">
+        <div class="modal">
+            <h3>新建分组</h3>
+            <input v-model="newGroup.name" placeholder="分组名称" class="input">
+            <input v-model="newGroup.description" placeholder="描述(可选)" class="input">
+            <div class="modal-actions">
+                <button @click="addGroup" class="btn btn-primary">创建</button>
+                <button @click="showAddGroupModal = false" class="btn">取消</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Dialog Panel -->
     <div v-if="dialogOpen" class="dialog-overlay" @click.self="closeDialog"></div>
     <div :class="['dialog-panel', dialogOpen ? 'dialog-panel-open' : '']">
         <div class="dialog-header">
-            <h3>{{ dialogAnchorType === 'trend' ? '趋势分析' : dialogAnchorType === 'platform' ? '平台分析' : dialogAnchorType === 'event' ? '事件分析' : '异常分析' }}</h3>
+            <h3>{{ dialogAnchorType === 'trend' ? '趋势分析' : dialogAnchorType === 'platform' ? '平台分析' : dialogAnchorType === 'event' ? '事件分析' : dialogAnchorType === 'opinion' ? '观点分析' : '异常分析' }}</h3>
             <button @click="closeDialog" class="dialog-close">&times;</button>
         </div>
         <div class="dialog-messages" ref="dialogMessages">
