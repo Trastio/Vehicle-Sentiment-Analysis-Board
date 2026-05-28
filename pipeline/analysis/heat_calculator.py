@@ -86,6 +86,37 @@ class HeatMetricCalculator:
             )
             self._session.add(metric)
 
+        # Calculate rank and percentile over last 30 days
+        thirty_days_ago = target_date - timedelta(days=30)
+        range_result = await self._session.execute(
+            select(HeatMetric.interaction_intensity).where(
+                HeatMetric.vehicle_id == vehicle_id,
+                HeatMetric.date >= thirty_days_ago,
+                HeatMetric.date <= target_date,
+            )
+        )
+        values = [v for (v,) in range_result.all() if v is not None and v > 0]
+        if values:
+            sorted_values = sorted(values, reverse=True)
+            rank_pos = 0
+            for i, v in enumerate(sorted_values):
+                if v <= metric.interaction_intensity:
+                    rank_pos = i
+                    break
+            percentile = round((1 - rank_pos / len(sorted_values)) * 100, 1)
+            if percentile >= 99:
+                metric.rank = "近30天最高"
+            elif percentile >= 90:
+                metric.rank = "前10%"
+            elif percentile >= 75:
+                metric.rank = "前25%"
+            else:
+                metric.rank = f"前{int(100 - percentile)}%"
+            metric.percentile = percentile
+        else:
+            metric.rank = "无历史数据"
+            metric.percentile = 0.0
+
         await self._session.commit()
         return metric
 

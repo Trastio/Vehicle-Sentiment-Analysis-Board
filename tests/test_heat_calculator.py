@@ -1,6 +1,6 @@
 """Tests: 4-layer Heat Metric Calculator."""
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -269,6 +269,89 @@ class TestIntegration:
         await calc.calculate_daily(vehicle.id, day)
         metrics = await calc.get_metrics(vehicle.id, day, day)
         assert len(metrics) == 1
+
+
+class TestRankAndPercentile:
+    """Rank + percentile over 30-day window."""
+
+    @pytest.mark.asyncio
+    async def test_metric_has_rank_and_percentile(self, db, vehicle):
+        from pipeline.analysis.heat_calculator import HeatMetricCalculator
+        day = date(2026, 5, 20)
+
+        # Add historical metrics for percentile calculation
+        for i in range(5):
+            d = date(2026, 5, 15) + timedelta(days=i)
+            db.add(HeatMetric(
+                id=str(uuid.uuid4()), vehicle_id=vehicle.id, date=d,
+                interaction_intensity=float(20 + i * 10),
+            ))
+        await db.commit()
+
+        await _seed(db, _make_post(vehicle.id, day))
+        calc = HeatMetricCalculator(db)
+        metric = await calc.calculate_daily(vehicle.id, day)
+        assert metric is not None
+        assert metric.rank is not None
+        assert metric.percentile is not None
+        assert metric.rank != "无历史数据"
+
+    @pytest.mark.asyncio
+    async def test_no_history_gives_default_rank(self, db, vehicle):
+        from pipeline.analysis.heat_calculator import HeatMetricCalculator
+        day = date(2026, 5, 20)
+
+        # No historical metrics, but the metric itself has interaction > 0
+        await _seed(db, _make_post(vehicle.id, day, likes=10, comments=5, shares=2))
+        calc = HeatMetricCalculator(db)
+        metric = await calc.calculate_daily(vehicle.id, day)
+
+        # Only 1 value in the 30-day window (itself), rank_pos=0
+        # percentile = (1 - 0/1)*100 = 100.0 -> "近30天最高"
+        assert metric is not None
+        assert metric.rank == "近30天最高"
+        assert metric.percentile == 100.0
+
+    @pytest.mark.asyncio
+    async def test_top_rank_when_highest(self, db, vehicle):
+        """Highest intensity in window gets '近30天最高'."""
+        from pipeline.analysis.heat_calculator import HeatMetricCalculator
+        day = date(2026, 5, 20)
+
+        # Historical metrics with low values
+        for i in range(10):
+            d = date(2026, 5, 10) + timedelta(days=i)
+            db.add(HeatMetric(
+                id=str(uuid.uuid4()), vehicle_id=vehicle.id, date=d,
+                interaction_intensity=float(10 + i),
+            ))
+        await db.commit()
+
+        # Today's metric will have interaction_intensity = 55.0
+        # which is higher than all historical (max 19).
+        # Sorted desc: [55, 19, 18, ..., 10]. rank_pos=0
+        # percentile = (1 - 0/11)*100 = 100.0 -> "近30天最高"
+        await _seed(db, _make_post(vehicle.id, day, likes=10, comments=5, shares=2))
+        calc = HeatMetricCalculator(db)
+        metric = await calc.calculate_daily(vehicle.id, day)
+
+        assert metric.rank == "近30天最高"
+        assert metric.interaction_intensity == 55.0
+        assert metric.percentile >= 99
+
+    @pytest.mark.asyncio
+    async def test_zero_interaction_no_history(self, db, vehicle):
+        from pipeline.analysis.heat_calculator import HeatMetricCalculator
+        day = date(2026, 5, 20)
+
+        # Only a news post — interaction_intensity will be 0
+        await _seed(db, _make_post(vehicle.id, day, source="bocha", platform="news"))
+        calc = HeatMetricCalculator(db)
+        metric = await calc.calculate_daily(vehicle.id, day)
+
+        assert metric is not None
+        assert metric.rank == "无历史数据"
+        assert metric.percentile == 0.0
 
 
 class TestSocialSourcesConstant:
