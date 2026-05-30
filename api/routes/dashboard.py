@@ -278,6 +278,38 @@ async def get_competitor_comparison(vehicle_id: str, session: AsyncSession = Dep
     return result
 
 
+@router.get("/comment-sentiment-diff/{vehicle_id}")
+async def get_comment_sentiment_diff(vehicle_id: str, session: AsyncSession = Depends(get_session)):
+    """Show posts where comment_summary.genuine_sentiment differs from post sentiment."""
+    result = await session.execute(
+        select(AnalyzedPost).where(
+            AnalyzedPost.vehicle_id == vehicle_id,
+            AnalyzedPost.comment_summary.isnot(None),
+        )
+    )
+    analyzed = result.scalars().all()
+    diff_items = []
+    for ap in analyzed:
+        try:
+            cs = json.loads(ap.comment_summary) if ap.comment_summary else {}
+        except (json.JSONDecodeError, TypeError):
+            continue
+        gs = cs.get("genuine_sentiment", "")
+        if gs and gs != ap.sentiment:
+            post_r = await session.execute(select(RawPost).where(RawPost.id == ap.post_id))
+            post = post_r.scalars().first()
+            diff_items.append({
+                "post_id": ap.post_id,
+                "title": (post.title or post.content[:40]) if post else "",
+                "post_sentiment": ap.sentiment,
+                "comment_sentiment": gs,
+                "is_argumentative": cs.get("is_argumentative", False),
+                "genuine_themes": cs.get("genuine_themes", []),
+                "summary": cs.get("summary", ""),
+            })
+    return diff_items
+
+
 @router.get("/vehicles/{vehicle_id}/events")
 async def get_event_timeline(vehicle_id: str, session: AsyncSession = Depends(get_session)):
     result = await session.execute(

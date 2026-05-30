@@ -41,12 +41,12 @@
     </header>
 
     <!-- 分组概览 Group Overview -->
-    <section v-if="currentGroupId && groupOverview.vehicles" class="section">
-        <h2>{{ groupOverview.name }} — 分组概览</h2>
+    <section v-if="currentGroupId && groupOverview.cards" class="section">
+        <h2>{{ groupOverview.group_name }} — 分组概览</h2>
         <div class="group-overview">
-            <div v-for="gv in groupOverview.vehicles" :key="gv.id" class="group-card" @click="selectGroupVehicle(gv.id)">
+            <div v-for="gv in groupOverview.cards" :key="gv.vehicle_id" class="group-card" @click="selectGroupVehicle(gv.vehicle_id)">
                 <h4>{{ gv.name }}</h4>
-                <div class="count">{{ gv.post_count || 0 }}</div>
+                <div class="count">{{ gv.total_posts || 0 }}</div>
                 <div class="card-label">舆情总量</div>
                 <div style="margin-top:6px;">
                     <span class="card-positive" style="margin-right:6px;">正 {{ gv.positive || 0 }}</span>
@@ -55,9 +55,21 @@
                 </div>
             </div>
         </div>
-        <div v-if="groupOverview.vehicles.length > 1" class="section" style="margin-top:16px;">
-            <h3>分组对比</h3>
+        <div v-if="groupOverview.cards.length > 1" class="section" style="margin-top:16px;">
+            <h3>情感对比</h3>
             <div id="group-comparison-chart" class="chart-sm"></div>
+        </div>
+    </section>
+
+    <!-- 分组趋势叠加 + 维度雷达 -->
+    <section v-if="currentGroupId && groupOverview.cards && groupOverview.cards.length > 1" class="section analysis-row">
+        <div class="analysis-col">
+            <h3>趋势对比</h3>
+            <div id="group-trend-chart" class="chart-container"></div>
+        </div>
+        <div class="analysis-col">
+            <h3>维度雷达</h3>
+            <div id="group-radar-chart" class="chart-container"></div>
         </div>
     </section>
 
@@ -122,6 +134,22 @@
         <div class="analysis-col" v-if="competitorData.length > 1">
             <h3>竞品对比</h3>
             <div id="competitor-chart" class="chart-sm"></div>
+        </div>
+        <div class="analysis-col" v-if="commentSentimentDiff.length">
+            <h3>帖子 vs 评论情感差异</h3>
+            <div class="comment-diff-list">
+                <div v-for="item in commentSentimentDiff" :key="item.post_id" class="comment-diff-item">
+                    <div class="diff-title">{{ item.title }}</div>
+                    <div class="diff-row">
+                        <span class="diff-label">帖子:</span>
+                        <span :class="'sentiment-' + item.post_sentiment">{{ sentimentLabel(item.post_sentiment) }}</span>
+                        <span class="diff-arrow">→</span>
+                        <span class="diff-label">评论区:</span>
+                        <span :class="'sentiment-' + item.comment_sentiment">{{ sentimentLabel(item.comment_sentiment) }}</span>
+                        <span v-if="item.is_argumentative" class="arg-badge">争吵</span>
+                    </div>
+                </div>
+            </div>
         </div>
     </section>
 

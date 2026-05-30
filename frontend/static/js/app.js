@@ -12,6 +12,7 @@ createApp({
             opinionDist: [],
             competitorData: [],
             anomalies: [],
+            commentSentimentDiff: [],
             posts: { items: [], total: 0, page: 1, size: 20 },
             reports: [],
             postsFilter: { sentiment: "", platform: "" },
@@ -35,6 +36,8 @@ createApp({
             groups: [],
             currentGroupId: "",
             groupOverview: {},
+            groupComparison: [],
+            groupTrendData: [],
             showAddGroupModal: false,
             newGroup: { name: "", description: "" },
         };
@@ -49,6 +52,8 @@ createApp({
             this.opinionChart?.resize();
             this.competitorChart?.resize();
             this.groupComparisonChart?.resize();
+            this.groupTrendChart?.resize();
+            this.groupRadarChart?.resize();
         });
     },
     methods: {
@@ -79,6 +84,7 @@ createApp({
                 this.loadOpinionTop(),
                 this.loadCompetitorComparison(),
                 this.loadAnomalies(),
+                this.loadCommentSentimentDiff(),
                 this.loadPosts(1),
                 this.loadReports(),
             ]);
@@ -221,6 +227,13 @@ createApp({
             const resp = await fetch(`/api/dashboard/anomaly-timeline/${this.currentVehicleId}?start=${start}&end=${end}`);
             this.anomalies = await resp.json();
         },
+        async loadCommentSentimentDiff() {
+            const resp = await fetch(`/api/dashboard/comment-sentiment-diff/${this.currentVehicleId}`);
+            this.commentSentimentDiff = resp.ok ? await resp.json() : [];
+        },
+        sentimentLabel(s) {
+            return { positive: "正面", negative: "负面", neutral: "中性", mixed: "混合" }[s] || s;
+        },
         async loadPosts(page) {
             const params = new URLSearchParams({ page, size: this.posts.size });
             if (this.postsFilter.sentiment) params.set("sentiment", this.postsFilter.sentiment);
@@ -329,42 +342,22 @@ createApp({
                 this.groupOverview = {};
                 return;
             }
-            // clear single-vehicle mode
             this.currentVehicleId = "";
             this.searchQuery = "";
             try {
-                const resp = await fetch(`/api/groups/${groupId}`);
-                if (!resp.ok) return;
-                const group = await resp.json();
-                // Build overview: fetch each vehicle's overview in parallel
-                const vehiclePromises = (group.vehicle_ids || []).map(async (vid) => {
-                    try {
-                        const r = await fetch(`/api/dashboard/overview/${vid}`);
-                        if (!r.ok) return { id: vid, name: vid, post_count: 0 };
-                        const data = await r.json();
-                        // fetch vehicle name
-                        const vr = await fetch(`/api/vehicles/${vid}`);
-                        const vinfo = vr.ok ? await vr.json() : {};
-                        return {
-                            id: vid,
-                            name: vinfo.name || vid,
-                            post_count: data.total_posts || 0,
-                            positive: data.positive || 0,
-                            negative: data.negative || 0,
-                            neutral: data.neutral || 0,
-                            health_score: data.health_score || "-",
-                        };
-                    } catch (e) {
-                        return { id: vid, name: vid, post_count: 0 };
-                    }
-                });
-                const vehicles = await Promise.all(vehiclePromises);
-                this.groupOverview = {
-                    name: group.name,
-                    vehicles: vehicles,
-                };
+                const [overviewResp, comparisonResp] = await Promise.all([
+                    fetch(`/api/groups/${groupId}/overview`),
+                    fetch(`/api/groups/${groupId}/comparison`),
+                ]);
+                if (!overviewResp.ok) return;
+                this.groupOverview = await overviewResp.json();
+                this.groupComparison = comparisonResp.ok ? await comparisonResp.json() : [];
                 this.$nextTick(() => {
                     this.renderGroupComparisonChart();
+                    if (this.groupComparison.length > 1) {
+                        this.loadGroupTrend(groupId);
+                        this.renderGroupRadarChart();
+                    }
                 });
             } catch (e) {}
         },
@@ -372,15 +365,14 @@ createApp({
             this.currentGroupId = "";
             this.groupOverview = {};
             this.currentVehicleId = vehicleId;
-            // fetch vehicle name for display
-            const gv = this.groupOverview.vehicles?.find(v => v.id === vehicleId);
+            const gv = this.groupOverview.cards?.find(v => v.vehicle_id === vehicleId);
             this.searchQuery = gv ? gv.name : "";
             this.onVehicleChange();
         },
         renderGroupComparisonChart() {
             const el = document.getElementById("group-comparison-chart");
             if (!el) return;
-            const vlist = this.groupOverview.vehicles || [];
+            const vlist = this.groupComparison || [];
             if (vlist.length < 1) return;
             if (!this.groupComparisonChart) this.groupComparisonChart = echarts.init(el);
             this.groupComparisonChart.setOption({
@@ -393,6 +385,76 @@ createApp({
                     { name: "负面", type: "bar", stack: "sentiment", data: vlist.map(v => v.negative || 0), itemStyle: { color: "#f56c6c" } },
                     { name: "中性", type: "bar", stack: "sentiment", data: vlist.map(v => v.neutral || 0), itemStyle: { color: "#909399" } },
                 ],
+            }, true);
+        },
+        async loadGroupTrend(groupId) {
+            const end = new Date().toISOString().slice(0, 10);
+            const start = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+            const resp = await fetch(`/api/groups/${groupId}/trend?start=${start}&end=${end}`);
+            if (!resp.ok) return;
+            this.groupTrendData = await resp.json();
+            this.renderGroupTrendChart();
+        },
+        renderGroupTrendChart() {
+            const el = document.getElementById("group-trend-chart");
+            if (!el) return;
+            if (!this.groupTrendData || !this.groupTrendData.length) return;
+            if (!this.groupTrendChart) this.groupTrendChart = echarts.init(el);
+            const colors = ["#5470c6", "#91cc75", "#fac858", "#ee6666", "#73c0de"];
+            const series = [];
+            const legendData = [];
+            let allDates = new Set();
+            this.groupTrendData.forEach(s => {
+                legendData.push(s.name);
+                s.data.forEach(d => allDates.add(d.date));
+            });
+            const dates = [...allDates].sort();
+            this.groupTrendData.forEach((s, i) => {
+                const dateMap = {};
+                s.data.forEach(d => { dateMap[d.date] = d.discussion_volume; });
+                series.push({
+                    name: s.name, type: "line", smooth: true,
+                    data: dates.map(d => dateMap[d] ?? null),
+                    itemStyle: { color: colors[i % colors.length] },
+                });
+            });
+            this.groupTrendChart.setOption({
+                tooltip: { trigger: "axis" },
+                legend: { data: legendData },
+                xAxis: { type: "category", data: dates },
+                yAxis: { type: "value", name: "讨论声量" },
+                dataZoom: [{ type: "inside" }],
+                series,
+            }, true);
+        },
+        renderGroupRadarChart() {
+            const el = document.getElementById("group-radar-chart");
+            if (!el) return;
+            const vlist = this.groupComparison || [];
+            if (vlist.length < 1) return;
+            // Collect all dimensions across vehicles
+            const dimSet = new Set();
+            vlist.forEach(v => {
+                Object.keys(v.dim_sentiment || {}).forEach(d => dimSet.add(d));
+            });
+            const dims = [...dimSet];
+            if (!dims.length) return;
+            if (!this.groupRadarChart) this.groupRadarChart = echarts.init(el);
+            const colors = ["#5470c6", "#91cc75", "#fac858", "#ee6666", "#73c0de"];
+            this.groupRadarChart.setOption({
+                tooltip: {},
+                legend: { data: vlist.map(v => v.name) },
+                radar: {
+                    indicator: dims.map(d => ({ name: d, max: 1, min: -1 })),
+                },
+                series: [{
+                    type: "radar",
+                    data: vlist.map((v, i) => ({
+                        name: v.name,
+                        value: dims.map(d => v.dim_sentiment?.[d] ?? 0),
+                        itemStyle: { color: colors[i % colors.length] },
+                    })),
+                }],
             }, true);
         },
         async addGroup() {
