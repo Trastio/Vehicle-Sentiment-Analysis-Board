@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.schemas import CollectionStatus, HeatMetric, RawPost, Vehicle
+from models.schemas import CollectionStatus, HeatMetric, PostComment, RawPost, Vehicle
 from pipeline.analysis.deduplicator import deduplicate, resolve_note_id
 from pipeline.collectors.full_text_crawler import crawl_full_text
 from pipeline.collectors.gopup_collector import GopupCollector
@@ -50,7 +50,8 @@ class CollectionScheduler:
             return "incremental", existing.last_collected_at
         return "initial", None
 
-    async def _run_collectors(self, keyword: str, start_date: str, end_date: str, vehicle_id: str) -> list[dict]:
+    async def _run_collectors(self, keyword: str, start_date: str, end_date: str, vehicle_id: str) -> tuple[list[dict], list[dict]]:
+        """Returns (posts, comments) — comments from social media stored separately."""
         logger.info("Collecting keyword='%s', range=%s to %s", keyword, start_date, end_date)
         coros, labels = [], []
 
@@ -59,7 +60,7 @@ class CollectionScheduler:
 
         if self._media.is_available():
             for platform in ["xiaohongshu", "weibo", "douyin", "kuaishou"]:
-                coros.append(self._media.search(keyword, platform))
+                coros.append(self._media.search_with_comments(keyword, platform))
                 labels.append(platform)
 
         coros.append(self._gopup.collect_baidu_index(keyword, start_date, end_date))
@@ -67,7 +68,7 @@ class CollectionScheduler:
 
         raw = await asyncio.gather(*coros, return_exceptions=True)
 
-        posts = []
+        all_posts, all_comments = [], []
         for label, result in zip(labels, raw):
             if isinstance(result, Exception):
                 logger.warning("Collector '%s' error: %s", label, result)
@@ -75,11 +76,16 @@ class CollectionScheduler:
             if label == "baidu_index":
                 await self._store_index_data(vehicle_id, result)
                 logger.info("Baidu index: %d points for '%s'", len(result), keyword)
+            elif label in ("xiaohongshu", "weibo", "douyin", "kuaishou"):
+                # search_with_comments returns (posts, comments)
+                posts, comments = result
+                all_posts.extend(posts)
+                all_comments.extend(comments)
             elif isinstance(result, list):
-                posts.extend(result)
+                all_posts.extend(result)
 
-        logger.info("Collection done for '%s': %d posts", keyword, len(posts))
-        return posts
+        logger.info("Collection done for '%s': %d posts, %d comments", keyword, len(all_posts), len(all_comments))
+        return all_posts, all_comments
 
     async def _crawl_full_texts(self, posts: list[dict]) -> list[dict]:
         sem = asyncio.Semaphore(_CRAWL_CONCURRENCY)
@@ -204,6 +210,55 @@ class CollectionScheduler:
         await self._session.commit()
         return count
 
+    async def _store_comments(self, vehicle_id: str, comments: list[dict]) -> int:
+        """Store extracted comments into PostComment table, linked to their parent posts by URL."""
+        if not comments:
+            return 0
+        # Build URL -> post_id mapping
+        url_result = await self._session.execute(
+            select(RawPost.id, RawPost.url).where(RawPost.vehicle_id == vehicle_id)
+        )
+        url_to_post_id: dict[str, str] = {}
+        for post_id, url in url_result.all():
+            if url:
+                url_to_post_id[url] = post_id
+                # Also index by note_id (last segment of URL)
+                note_id = url.rsplit("/", 1)[-1].split("?")[0].split("#")[0]
+                if note_id:
+                    url_to_post_id[note_id] = post_id
+
+        count = 0
+        for c in comments:
+            post_url = c.get("post_url", "")
+            note_id = c.get("post_note_id", "")
+            post_id = url_to_post_id.get(post_url) or url_to_post_id.get(note_id)
+            if not post_id:
+                continue
+
+            published_at = None
+            raw_date = c.get("published_at", "")
+            if raw_date:
+                try:
+                    published_at = datetime.fromisoformat(raw_date)
+                except (ValueError, TypeError):
+                    pass
+
+            self._session.add(PostComment(
+                id=str(uuid.uuid4()),
+                post_id=post_id,
+                vehicle_id=vehicle_id,
+                content=c.get("content", ""),
+                author=c.get("author", ""),
+                likes=c.get("likes", 0),
+                platform=c.get("platform", ""),
+                published_at=published_at,
+            ))
+            count += 1
+
+        if count:
+            await self._session.commit()
+        return count
+
     async def _update_status(self, vehicle_id: str, mode: str, posts_count: int, error: str | None = None):
         result = await self._session.execute(
             select(CollectionStatus).where(
@@ -243,18 +298,21 @@ class CollectionScheduler:
             keywords = await self._expand_keywords_if_needed(vehicle)
 
             all_posts: list[dict] = []
+            all_comments: list[dict] = []
             for keyword in keywords:
                 for start, end in date_ranges:
-                    posts = await self._run_collectors(keyword, start, end, vehicle_id)
+                    posts, comments = await self._run_collectors(keyword, start, end, vehicle_id)
                     all_posts.extend(posts)
+                    all_comments.extend(comments)
 
             all_posts = await self._crawl_full_texts(all_posts)
             all_posts = await self._resolve_urls(all_posts)
             all_posts = self._run_dedup(all_posts)
             stored = await self._store_posts(vehicle_id, all_posts)
+            comment_count = await self._store_comments(vehicle_id, all_comments)
             await self._update_status(vehicle_id, mode, stored)
-            logger.info("采集完成: %d posts stored for %s", stored, vehicle.name)
-            return {"vehicle_id": vehicle_id, "mode": mode, "posts_collected": stored, "status": "completed"}
+            logger.info("采集完成: %d posts + %d comments stored for %s", stored, comment_count, vehicle.name)
+            return {"vehicle_id": vehicle_id, "mode": mode, "posts_collected": stored, "comments_collected": comment_count, "status": "completed"}
         except Exception as e:
             await self._session.rollback()
             logger.warning("采集失败 vehicle=%s: %s", vehicle_id, e)
