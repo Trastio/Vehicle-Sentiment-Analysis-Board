@@ -153,13 +153,14 @@ async def test_batch_runner_stores_new_fields(db):
         await session.commit()
 
         runner = BatchAnalysisRunner(session)
-        with patch.object(runner._pipeline, "analyze_single", new_callable=AsyncMock) as mock_analyze:
-            mock_analyze.return_value = {
+        with patch.object(runner._pipeline, "analyze_batch", new_callable=AsyncMock) as mock_analyze:
+            mock_analyze.return_value = [{
+                "id": "post_new1", "content": "刹车异响",
                 "sentiment": "negative", "is_event": True,
                 "event_description": "刹车异响", "event_tags": ["异响/故障"],
                 "opinion_tags": ["刹车问题"], "dim_sentiment": {"安全性": -1},
                 "confidence": 0.9,
-            }
+            }]
             result = await runner.run_for_vehicle(vehicle_id)
             assert result["analyzed"] == 1
 
@@ -189,15 +190,17 @@ async def test_batch_runner_uses_full_content(db):
         await session.commit()
 
         runner = BatchAnalysisRunner(session)
-        with patch.object(runner._pipeline, "analyze_single", new_callable=AsyncMock) as mock_analyze:
-            mock_analyze.return_value = {
+        with patch.object(runner._pipeline, "analyze_batch", new_callable=AsyncMock) as mock_analyze:
+            mock_analyze.return_value = [{
+                "id": "post_fc1", "content": "Full article with lots of detail " * 20,
                 "sentiment": "positive", "is_event": False,
                 "event_description": "", "event_tags": [],
                 "opinion_tags": [], "dim_sentiment": {},
                 "confidence": 0.8,
-            }
+            }]
             result = await runner.run_for_vehicle(vehicle_id)
-            # Verify analyze_single was called with full_content, not snippet
+            assert result["analyzed"] == 1
+            # Verify analyze_batch was called with full_content, not snippet
             call_args = mock_analyze.call_args[0][0]
-            assert "Full article" in call_args
-            assert "short snippet" != call_args
+            assert len(call_args) == 1
+            assert "Full article" in call_args[0]["content"]

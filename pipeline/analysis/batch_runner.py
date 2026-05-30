@@ -100,9 +100,14 @@ class BatchAnalysisRunner:
             if not batch:
                 break
 
-            for post in batch:
-                analysis = await self._analyze_single_post(post)
+            post_dicts = [
+                {"id": p.id, "content": p.full_content if p.full_content else p.content}
+                for p in batch
+            ]
+            analyses = await self._pipeline.analyze_batch(post_dicts)
+            for post, analysis in zip(batch, analyses):
                 confidence = analysis.get("confidence", 0.0)
+                model_name = "local+api" if self._pipeline._use_local else (self._pipeline._model or "unknown")
                 self._session.add(AnalyzedPost(
                     id=str(uuid.uuid4()),
                     post_id=post.id,
@@ -111,7 +116,7 @@ class BatchAnalysisRunner:
                     event_tags=json.dumps(analysis.get("event_tags", []), ensure_ascii=False),
                     opinion_tags=json.dumps(analysis.get("opinion_tags", []), ensure_ascii=False),
                     confidence=max(0.0, min(1.0, confidence)),
-                    model_used=self._pipeline._model or "deepseek-v4-flash",
+                    model_used=model_name,
                     is_event=analysis.get("is_event", False),
                     event_description=analysis.get("event_description", ""),
                     dim_sentiment=json.dumps(analysis.get("dim_sentiment", {}), ensure_ascii=False),

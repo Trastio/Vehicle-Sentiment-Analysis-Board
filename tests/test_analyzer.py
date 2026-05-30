@@ -233,6 +233,115 @@ class TestAnalyzeBatch:
         assert results[0]["id"] == "p1"
 
 
+# ── Dual model (local + API) ──────────────────────────────────────────────
+
+class TestDualModel:
+    @pytest.mark.asyncio
+    async def test_dual_analyze_single_merges_results(self):
+        pipeline = AnalysisPipeline()
+        pipeline._use_local = True
+
+        local_result = {"dim_sentiment": {"外观": 1, "空间": 1}, "sentiment": "positive"}
+        mock_local = MagicMock()
+        mock_local.predict_single = MagicMock(return_value=local_result)
+
+        api_event_result = {
+            "is_event": False,
+            "event_description": "",
+            "event_tags": [],
+            "opinion_tags": ["颜值高"],
+            "confidence": 0.85,
+        }
+        with patch.object(pipeline, "_local_absa", mock_local), \
+             patch.object(pipeline, "_analyze_event_api", new_callable=AsyncMock, return_value=api_event_result):
+            result = await pipeline.analyze_single("外观好看空间大")
+        assert result["sentiment"] == "positive"
+        assert result["dim_sentiment"]["外观"] == 1
+        assert result["is_event"] is False
+        assert result["opinion_tags"] == ["颜值高"]
+
+    @pytest.mark.asyncio
+    async def test_dual_analyze_batch_parallel(self):
+        pipeline = AnalysisPipeline()
+        pipeline._use_local = True
+
+        local_results = [
+            {"dim_sentiment": {"续航里程": 1}, "sentiment": "positive"},
+            {"dim_sentiment": {"安全性": -1}, "sentiment": "negative"},
+        ]
+        mock_local = MagicMock()
+        mock_local.predict_batch = MagicMock(return_value=local_results)
+
+        api_results = [
+            {"is_event": False, "event_description": "", "event_tags": [], "opinion_tags": ["续航好"], "confidence": 0.9},
+            {"is_event": True, "event_description": "刹车失灵", "event_tags": ["安全事故"], "opinion_tags": ["刹车"], "confidence": 0.95},
+        ]
+
+        async def mock_event_api(text):
+            if "续航" in text:
+                return api_results[0]
+            return api_results[1]
+
+        posts = [
+            {"id": "p1", "content": "续航很好"},
+            {"id": "p2", "content": "刹车失灵了"},
+        ]
+        with patch.object(pipeline, "_local_absa", mock_local), \
+             patch.object(pipeline, "_analyze_event_api", side_effect=mock_event_api):
+            results = await pipeline.analyze_batch(posts)
+
+        assert len(results) == 2
+        assert results[0]["dim_sentiment"]["续航里程"] == 1
+        assert results[0]["is_event"] is False
+        assert results[1]["is_event"] is True
+        assert results[1]["dim_sentiment"]["安全性"] == -1
+
+    @pytest.mark.asyncio
+    async def test_dual_fallback_when_local_fails(self):
+        pipeline = AnalysisPipeline()
+        pipeline._use_local = True
+
+        mock_local = MagicMock()
+        mock_local.predict_single = MagicMock(side_effect=RuntimeError("GPU OOM"))
+
+        api_result = {
+            "is_event": False, "event_description": "",
+            "event_tags": [], "opinion_tags": [], "confidence": 0.5,
+        }
+        with patch.object(pipeline, "_local_absa", mock_local), \
+             patch.object(pipeline, "_analyze_event_api", new_callable=AsyncMock, return_value=api_result):
+            result = await pipeline.analyze_single("some text")
+        assert result["sentiment"] == "neutral"
+        assert result["dim_sentiment"] == {}
+        assert result["is_event"] is False
+
+
+# ── Event-only API prompt ─────────────────────────────────────────────────
+
+class TestEventOnlyApi:
+    @pytest.mark.asyncio
+    async def test_event_api_parse(self):
+        pipeline = AnalysisPipeline()
+        raw = json.dumps({
+            "is_event": True,
+            "event_description": "降价",
+            "event_tags": ["降价/促销"],
+            "opinion_tags": ["价格跳水"],
+            "confidence": 0.88,
+        })
+        result = AnalysisPipeline._parse_event_response(raw)
+        assert result["is_event"] is True
+        assert result["event_tags"] == ["降价/促销"]
+        assert result["opinion_tags"] == ["价格跳水"]
+
+    @pytest.mark.asyncio
+    async def test_event_api_invalid_json(self):
+        result = AnalysisPipeline._parse_event_response("not json")
+        assert result["is_event"] is False
+        assert result["event_tags"] == []
+        assert result["confidence"] == 0.0
+
+
 # ── Integration: real API format (Anthropic) ──────────────────────────────
 
 class TestAnalyzeSingleIntegration:
