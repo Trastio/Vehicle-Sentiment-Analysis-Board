@@ -216,9 +216,19 @@ async def _build_context(vehicle_id: str, anchor_type: str, anchor_data: dict, s
 
 async def generate_dialog_response(vehicle_name: str, context: str, message: str, history: list[dict]) -> list[str]:
     config = load_api_config()
-    api_key = config.get("deepseek", {}).get("api_key", "")
-    api_url = config.get("deepseek", {}).get("api_url", "https://api.deepseek.com/v1/chat/completions")
-    model = config.get("deepseek", {}).get("model", "deepseek-chat")
+    # Prefer DeepSeek, fall back to GLM
+    deepseek_cfg = config.get("deepseek", {})
+    glm_cfg = config.get("glm", {})
+    if deepseek_cfg.get("api_key"):
+        api_key = deepseek_cfg["api_key"]
+        api_url = deepseek_cfg.get("api_url", "https://api.deepseek.com/v1/chat/completions")
+        model = deepseek_cfg.get("model", "deepseek-chat")
+    elif glm_cfg.get("api_key"):
+        api_key = glm_cfg["api_key"]
+        api_url = glm_cfg.get("base_url", "https://open.bigmodel.cn/api/paas/v4") + "/chat/completions"
+        model = glm_cfg.get("model", "glm-4-flash")
+    else:
+        api_key = ""
 
     messages = [{"role": "system", "content": f"""你是汽车舆情分析师，正在和用户讨论 {vehicle_name} 的舆情数据。
 
