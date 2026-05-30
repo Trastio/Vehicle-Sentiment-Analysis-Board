@@ -25,6 +25,12 @@ async def _run_analysis_pipeline(vehicle_id: str, _session_factory=None):
             result = await runner.run_for_vehicle(vehicle_id)
             analyzed = result.get("analyzed", 0)
 
+            # Comment summaries for Top 5 posts
+            try:
+                comment_count = await runner.run_comment_summaries(vehicle_id)
+            except Exception:
+                comment_count = 0
+
             pipeline_phases[vehicle_id] = {"phase": "calculating", "posts_collected": pipeline_phases[vehicle_id]["posts_collected"], "analyzed": analyzed, "error": None}
 
             calc = HeatMetricCalculator(session)
@@ -35,6 +41,13 @@ async def _run_analysis_pipeline(vehicle_id: str, _session_factory=None):
             from pipeline.analysis.anomaly_detector import AnomalyDetector
             detector = AnomalyDetector(session)
             await detector.check_range(vehicle_id, start, end)
+
+            # DBSCAN event clustering
+            try:
+                from pipeline.analysis.event_tracker import cluster_events_for_vehicle
+                await cluster_events_for_vehicle(vehicle_id, session)
+            except Exception:
+                pass
 
             pipeline_phases[vehicle_id] = {"phase": "completed", "posts_collected": pipeline_phases[vehicle_id]["posts_collected"], "analyzed": analyzed, "error": None}
         except Exception as e:

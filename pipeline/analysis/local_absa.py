@@ -83,6 +83,7 @@ class LocalABSAModel:
         self._model = None
         self._tokenizer = None
         self._loaded = False
+        self._pending_path = None
 
     @classmethod
     def get(cls) -> "LocalABSAModel":
@@ -96,6 +97,15 @@ class LocalABSAModel:
     def load(self, model_path: str):
         if self._loaded:
             return
+        self._pending_path = model_path
+
+    def _ensure_loaded(self):
+        """Lazy load in the calling thread — avoids CUDA cross-thread tensor issues."""
+        if self._loaded:
+            return
+        if not self._pending_path:
+            return
+        model_path = self._pending_path
 
         adapter_config_path = os.path.join(model_path, "adapter_config.json")
         base_model = "unsloth/Qwen3-4B-unsloth-bnb-4bit"
@@ -115,7 +125,7 @@ class LocalABSAModel:
 
         model, tokenizer = FastLanguageModel.from_pretrained(
             model_name=base_model,
-            max_seq_length=2048,
+            max_seq_length=8192,
             load_in_4bit=True,
             dtype=None,
         )
@@ -135,6 +145,7 @@ class LocalABSAModel:
         return self.predict_batch([text])[0]
 
     def predict_batch(self, texts: list[str], batch_size: int = 8) -> list[dict]:
+        self._ensure_loaded()
         if not self._loaded:
             return [{"dim_sentiment": {}, "sentiment": "neutral"}] * len(texts)
 
@@ -150,6 +161,7 @@ class LocalABSAModel:
     def _generate_batch(self, texts: list[str]) -> list[dict]:
         import torch
 
+        max_input = 2048
         input_ids_list = []
         for text in texts:
             messages = [
@@ -159,6 +171,8 @@ class LocalABSAModel:
             ids = self._tokenizer.apply_chat_template(
                 messages, tokenize=True, add_generation_prompt=True,
             )
+            if len(ids) > max_input:
+                ids = ids[:max_input]
             input_ids_list.append(torch.tensor(ids, dtype=torch.long))
 
         # Left-pad to same length

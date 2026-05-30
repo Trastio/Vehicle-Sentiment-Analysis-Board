@@ -108,12 +108,9 @@ class AnalysisPipeline:
         local_path = local_cfg.get("path", "") or os.environ.get("LOCAL_MODEL_PATH", "")
         self._use_local = False
         if local_path and os.path.exists(os.path.join(local_path, "adapter_config.json")):
-            try:
-                self._local_absa.load(local_path)
-                self._use_local = True
-                logger.info("Dual model mode: local ABSA + API event analysis")
-            except Exception as e:
-                logger.warning("Failed to load local model, falling back to API-only: %s", e)
+            self._local_absa.load(local_path)
+            self._use_local = True
+            logger.info("Dual model mode: local ABSA + API event analysis")
 
     # ── Unified API call ──────────────────────────────────────────────
 
@@ -207,9 +204,6 @@ class AnalysisPipeline:
     async def _analyze_batch_dual(self, posts: list[dict]) -> list[dict]:
         texts = [p.get("content", "") for p in posts]
 
-        loop = asyncio.get_event_loop()
-        local_future = loop.run_in_executor(None, self._local_absa.predict_batch, texts)
-
         sem = asyncio.Semaphore(_API_CONCURRENCY)
 
         async def _call_with_sem(text):
@@ -220,7 +214,10 @@ class AnalysisPipeline:
             *[_call_with_sem(t) for t in texts], return_exceptions=True,
         )
 
-        local_results, api_results = await asyncio.gather(local_future, api_future)
+        # Run local inference synchronously (GPU-bound, ~10s for 200 posts)
+        # CUDA requires same-thread load+infer; run_in_executor causes tensor mismatch
+        local_results = self._local_absa.predict_batch(texts)
+        api_results = await api_future
 
         merged = []
         for i, post in enumerate(posts):
