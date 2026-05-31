@@ -55,6 +55,19 @@ async def _run_full_pipeline(vehicle_id: str, _session_factory=None):
             detector = AnomalyDetector(session)
             await detector.check_range(vehicle_id, start, end)
 
+            # Comment summaries for top posts
+            try:
+                await runner.run_comment_summaries(vehicle_id)
+            except Exception:
+                pass
+
+            # DBSCAN event clustering
+            try:
+                from pipeline.analysis.event_tracker import cluster_events_for_vehicle
+                await cluster_events_for_vehicle(vehicle_id, session)
+            except Exception:
+                pass
+
             pipeline_phases[vehicle_id] = {"phase": "completed", "posts_collected": posts_collected, "analyzed": analyzed, "error": None}
             logger.info("Pipeline completed: vehicle=%s, collected=%d, analyzed=%d", vehicle_id, posts_collected, analyzed)
 

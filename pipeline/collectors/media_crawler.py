@@ -170,8 +170,10 @@ class MediaCrawlerWrapper:
     def _enrich_with_comments(posts: list[dict], comments: dict[str, list[dict]]) -> list[dict]:
         for post in posts:
             post_url = post.get("url", "")
-            note_id = post_url.rsplit("/", 1)[-1] if post_url else ""
+            note_id = post_url.rsplit("/", 1)[-1] if "/" in post_url else post_url
             post_comments = comments.get(note_id, [])
+            if not post_comments:
+                post_comments = comments.get(post_url, [])
             if post_comments:
                 top_comments = sorted(post_comments, key=lambda c: int(c.get("like_count", 0) or 0), reverse=True)[:5]
                 comment_texts = [c.get("content", "") for c in top_comments if c.get("content")]
@@ -184,9 +186,11 @@ class MediaCrawlerWrapper:
         matched_ids = set()
         for post in posts:
             post_url = post.get("url", "")
-            note_id = post_url.rsplit("/", 1)[-1] if post_url else ""
+            note_id = post_url.rsplit("/", 1)[-1] if "/" in post_url else post_url
             if note_id:
                 matched_ids.add(note_id)
+            if post_url:
+                matched_ids.add(post_url)
         orphans = []
         for note_id, clist in comments.items():
             if note_id in matched_ids:
@@ -220,8 +224,11 @@ class MediaCrawlerWrapper:
         comments = []
         for post in posts:
             post_url = post.get("url", "")
-            note_id = post_url.rsplit("/", 1)[-1] if post_url else ""
-            for c in raw_comments.get(note_id, []):
+            note_id = post_url.rsplit("/", 1)[-1] if "/" in post_url else post_url
+            post_comments = raw_comments.get(note_id, [])
+            if not post_comments:
+                post_comments = raw_comments.get(post_url, [])
+            for c in post_comments:
                 content = c.get("content", "")
                 if not content:
                     continue
@@ -303,7 +310,7 @@ class MediaCrawlerWrapper:
             "title": title,
             "content": content,
             "author": item.get("nickname", item.get("author", "")),
-            "url": item.get("note_url", item.get("url", item.get("note_id", ""))),
+            "url": item.get("note_url", item.get("url", item.get("video_url", item.get("note_id", item.get("aweme_id", item.get("video_id", "")))))),
             "likes": int(item.get("liked_count", item.get("likes", 0)) or 0),
             "comments": int(item.get("comment_count", item.get("comments_count", item.get("comments", 0))) or 0),
             "shares": int(item.get("share_count", item.get("shared_count", item.get("shares", 0))) or 0),
