@@ -10,7 +10,7 @@ from pipeline.analysis.analyzer import AnalysisPipeline
 from utils.llm_helpers import extract_json_object
 from utils.constants import ENGAGEMENT_WEIGHT_LIKES, ENGAGEMENT_WEIGHT_COMMENTS, ENGAGEMENT_WEIGHT_SHARES
 
-MAX_POSTS_PER_RUN = 200
+MAX_POSTS_PER_RUN = 1000
 
 
 # ── Half-month period helpers ─────────────────────────────────────────────
