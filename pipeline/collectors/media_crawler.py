@@ -218,7 +218,7 @@ class MediaCrawlerWrapper:
                     "content": content,
                     "author": c.get("nickname", ""),
                     "url": f"{note_id}#comment-{c.get('comment_id', '')}",
-                    "likes": int(c.get("like_count", 0) or 0),
+                    "likes": MediaCrawlerWrapper._safe_int(c.get("like_count", 0)),
                     "comments": 0,
                     "shares": 0,
                     "platform": platform_code,
@@ -251,7 +251,7 @@ class MediaCrawlerWrapper:
                     "post_note_id": note_id,
                     "content": content,
                     "author": c.get("nickname", ""),
-                    "likes": int(c.get("like_count", 0) or 0),
+                    "likes": MediaCrawlerWrapper._safe_int(c.get("like_count", 0)),
                     "platform": platform_code,
                     "published_at": MediaCrawlerWrapper._extract_published_at(c),
                 })
