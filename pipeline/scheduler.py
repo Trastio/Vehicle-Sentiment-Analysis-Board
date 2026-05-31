@@ -285,6 +285,19 @@ class CollectionScheduler:
             ))
         await self._session.commit()
 
+    async def _import_historical(self) -> tuple[list[dict], list[dict]]:
+        if not self._media.is_available():
+            return [], []
+        posts, comments = [], []
+        for platform in ["xiaohongshu", "weibo", "douyin", "kuaishou"]:
+            try:
+                hp, hc = self._media.import_all_historical(platform)
+                posts.extend(hp)
+                comments.extend(hc)
+            except Exception as e:
+                logger.warning("Historical import %s failed: %s", platform, e)
+        return posts, comments
+
     async def collect_vehicle(self, vehicle_id: str) -> dict:
         vehicle = await self._session.get(Vehicle, vehicle_id)
         if not vehicle:
@@ -299,6 +312,11 @@ class CollectionScheduler:
 
             all_posts: list[dict] = []
             all_comments: list[dict] = []
+            if mode == "initial":
+                hist_posts, hist_comments = await self._import_historical()
+                all_posts.extend(hist_posts)
+                all_comments.extend(hist_comments)
+
             for keyword in keywords:
                 for start, end in date_ranges:
                     posts, comments = await self._run_collectors(keyword, start, end, vehicle_id)

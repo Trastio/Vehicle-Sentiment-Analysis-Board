@@ -88,7 +88,8 @@ class TestCollectVehicle:
              "source": "tavily", "platform": "news", "author": "tester",
              "published_at": "2026-05-20"},
         ]
-        with patch.object(s, "_run_collectors", new_callable=AsyncMock, return_value=(mock_posts, [])), \
+        with patch.object(s, "_import_historical", new_callable=AsyncMock, return_value=([], [])), \
+             patch.object(s, "_run_collectors", new_callable=AsyncMock, return_value=(mock_posts, [])), \
              patch.object(s, "_crawl_full_texts", new_callable=AsyncMock, side_effect=lambda p: p), \
              patch.object(s, "_resolve_urls", new_callable=AsyncMock, side_effect=lambda p: p), \
              patch.object(s, "_run_dedup", side_effect=lambda p: p), \
@@ -103,7 +104,8 @@ class TestCollectVehicle:
     async def test_creates_status_records(self, db, vehicle):
         from pipeline.scheduler import CollectionScheduler
         s = CollectionScheduler(db)
-        with patch.object(s, "_run_collectors", new_callable=AsyncMock, return_value=([], [])), \
+        with patch.object(s, "_import_historical", new_callable=AsyncMock, return_value=([], [])), \
+             patch.object(s, "_run_collectors", new_callable=AsyncMock, return_value=([], [])), \
              patch.object(s, "_crawl_full_texts", new_callable=AsyncMock, side_effect=lambda p: p), \
              patch.object(s, "_resolve_urls", new_callable=AsyncMock, side_effect=lambda p: p), \
              patch.object(s, "_run_dedup", side_effect=lambda p: p), \
@@ -118,7 +120,8 @@ class TestCollectVehicle:
     async def test_error_does_not_crash(self, db, vehicle):
         from pipeline.scheduler import CollectionScheduler
         s = CollectionScheduler(db)
-        with patch.object(s, "_expand_keywords_if_needed", new_callable=AsyncMock, side_effect=Exception("API down")):
+        with patch.object(s, "_import_historical", new_callable=AsyncMock, return_value=([], [])), \
+             patch.object(s, "_expand_keywords_if_needed", new_callable=AsyncMock, side_effect=Exception("API down")):
             result = await s.collect_vehicle(vehicle.id)
         assert result["status"] == "error"
 
@@ -134,7 +137,8 @@ class TestCollectVehicle:
             {"title": "B", "content": "c3" * 50, "url": "https://ex.com/2",
              "source": "tavily", "platform": "news"},
         ]
-        with patch.object(s, "_run_collectors", new_callable=AsyncMock, return_value=(posts, [])), \
+        with patch.object(s, "_import_historical", new_callable=AsyncMock, return_value=([], [])), \
+             patch.object(s, "_run_collectors", new_callable=AsyncMock, return_value=(posts, [])), \
              patch.object(s, "_crawl_full_texts", new_callable=AsyncMock, side_effect=lambda p: p), \
              patch.object(s, "_resolve_urls", new_callable=AsyncMock, side_effect=lambda p: p), \
              patch.object(s, "_run_dedup", side_effect=lambda p: p), \

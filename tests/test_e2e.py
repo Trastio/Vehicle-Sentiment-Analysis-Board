@@ -54,7 +54,8 @@ async def test_full_e2e_pipeline(client_and_db):
     ]
     mock_analysis = {"sentiment": "positive", "event_tags": ["新车上市"], "opinion_tags": ["续航好"], "confidence": 0.9}
 
-    with patch("pipeline.scheduler.CollectionScheduler._run_collectors", new_callable=AsyncMock, return_value=(mock_posts, [])), \
+    with patch("pipeline.scheduler.CollectionScheduler._import_historical", new_callable=AsyncMock, return_value=([], [])), \
+         patch("pipeline.scheduler.CollectionScheduler._run_collectors", new_callable=AsyncMock, return_value=(mock_posts, [])), \
          patch("pipeline.scheduler.CollectionScheduler._crawl_full_texts", new_callable=AsyncMock, side_effect=lambda p: p), \
          patch("pipeline.scheduler.CollectionScheduler._resolve_urls", new_callable=AsyncMock, side_effect=lambda p: p), \
          patch("pipeline.scheduler.CollectionScheduler._run_dedup", side_effect=lambda p: p), \

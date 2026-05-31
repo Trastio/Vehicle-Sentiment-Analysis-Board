@@ -105,7 +105,8 @@ async def test_pipeline_collects_and_completes(db):
         session.add(Vehicle(id="v1", name="海豹", brand="比亚迪", search_keywords='["海豹"]'))
         await session.commit()
 
-    with patch("pipeline.scheduler.CollectionScheduler._run_collectors", new_callable=AsyncMock, return_value=([
+    with patch("pipeline.scheduler.CollectionScheduler._import_historical", new_callable=AsyncMock, return_value=([], [])), \
+         patch("pipeline.scheduler.CollectionScheduler._run_collectors", new_callable=AsyncMock, return_value=([
         {"title": "测试", "content": "内容", "url": "https://ex.com/1",
          "source": "news", "platform": "news", "published_at": "2026-05-20"},
     ], [])), patch("pipeline.analysis.batch_runner.BatchAnalysisRunner._analyze_single_post",
@@ -124,7 +125,8 @@ async def test_pipeline_handles_collection_error(db):
         session.add(Vehicle(id="v2", name="秦PLUS", brand="比亚迪", search_keywords='["秦PLUS"]'))
         await session.commit()
 
-    with patch("pipeline.scheduler.CollectionScheduler._run_collectors", new_callable=AsyncMock, side_effect=Exception("timeout")):
+    with patch("pipeline.scheduler.CollectionScheduler._import_historical", new_callable=AsyncMock, return_value=([], [])), \
+         patch("pipeline.scheduler.CollectionScheduler._run_collectors", new_callable=AsyncMock, side_effect=Exception("timeout")):
         await _run_full_pipeline("v2", _session_factory=db)
 
     assert pipeline_phases["v2"]["phase"] == "error"
@@ -141,7 +143,8 @@ async def test_pipeline_deduplicates_posts(db):
         {"title": "dup", "content": "c2", "url": "https://ex.com/1",
          "source": "bocha", "platform": "news"},
     ]
-    with patch("pipeline.scheduler.CollectionScheduler._run_collectors", new_callable=AsyncMock, return_value=(posts, [])):
+    with patch("pipeline.scheduler.CollectionScheduler._import_historical", new_callable=AsyncMock, return_value=([], [])), \
+         patch("pipeline.scheduler.CollectionScheduler._run_collectors", new_callable=AsyncMock, return_value=(posts, [])):
         await _run_full_pipeline("v3", _session_factory=db)
 
     assert pipeline_phases["v3"]["posts_collected"] == 1

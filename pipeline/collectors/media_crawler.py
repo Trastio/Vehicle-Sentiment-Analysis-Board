@@ -114,12 +114,13 @@ class MediaCrawlerWrapper:
             logger.warning("MediaCrawler %s error: %s", platform, e)
             return []
 
-    def _read_results(self, platform_code: str, keyword: str, *, enrich_comments: bool = True) -> list[dict]:
+    def _read_results(self, platform_code: str, keyword: str, *, enrich_comments: bool = True, read_all: bool = False) -> list[dict]:
         data_name = DATA_DIR_MAP.get(platform_code, platform_code)
         data_dir = self._crawler_dir / "data" / data_name / "jsonl"
         if not data_dir.exists():
             return []
         results = []
+        seen_ids: set[str] = set()
         for f in sorted(data_dir.glob("search_contents_*.jsonl"), reverse=True):
             with open(f, encoding="utf-8") as fh:
                 for line in fh:
@@ -130,8 +131,14 @@ class MediaCrawlerWrapper:
                         item = json.loads(line)
                     except json.JSONDecodeError:
                         continue
+                    uid = item.get("note_id") or item.get("aweme_id") or item.get("video_id") or ""
+                    if read_all and uid and uid in seen_ids:
+                        continue
+                    if uid:
+                        seen_ids.add(uid)
                     results.append(self._normalize_item(item, platform_code))
-            break
+            if not read_all:
+                break
 
         if enrich_comments:
             comments = self._read_comments(platform_code)
@@ -144,12 +151,13 @@ class MediaCrawlerWrapper:
 
         return results
 
-    def _read_comments(self, platform_code: str) -> dict[str, list[dict]]:
+    def _read_comments(self, platform_code: str, *, read_all: bool = False) -> dict[str, list[dict]]:
         data_name = DATA_DIR_MAP.get(platform_code, platform_code)
         data_dir = self._crawler_dir / "data" / data_name / "jsonl"
         if not data_dir.exists():
             return {}
         comments: dict[str, list[dict]] = {}
+        seen_ids: set[str] = set()
         for f in sorted(data_dir.glob("search_comments_*.jsonl"), reverse=True):
             with open(f, encoding="utf-8") as fh:
                 for line in fh:
@@ -160,10 +168,16 @@ class MediaCrawlerWrapper:
                         c = json.loads(line)
                     except json.JSONDecodeError:
                         continue
+                    cid = c.get("comment_id", c.get("id", ""))
+                    if read_all and cid and cid in seen_ids:
+                        continue
+                    if cid:
+                        seen_ids.add(cid)
                     note_id = c.get("note_id", c.get("aweme_id", ""))
                     if note_id:
                         comments.setdefault(note_id, []).append(c)
-            break
+            if not read_all:
+                break
         return comments
 
     @staticmethod
@@ -276,6 +290,18 @@ class MediaCrawlerWrapper:
             logger.warning("MediaCrawler %s error: %s", platform, e)
             return [], []
 
+    def import_all_historical(self, platform: PlatformName) -> tuple[list[dict], list[dict]]:
+        """Read ALL historical data files for a platform (no crawl, just import from disk)."""
+        code = PLATFORM_MAP.get(platform)
+        if not code:
+            return [], []
+        results = self._read_results(code, "", enrich_comments=False, read_all=True)
+        raw_comments = self._read_comments(code, read_all=True)
+        comments = self._extract_comments(results, raw_comments, code)
+        results = [r for r in results if not self._is_dealer_post(r)]
+        logger.info("Historical import %s: %d posts + %d comments", platform, len(results), len(comments))
+        return results, comments
+
     @staticmethod
     def _is_dealer_post(post: dict) -> bool:
         author = post.get("author", "")
@@ -301,6 +327,13 @@ class MediaCrawlerWrapper:
         return ""
 
     @staticmethod
+    def _safe_int(val, default=0):
+        try:
+            return int(val or default)
+        except (ValueError, TypeError):
+            return default
+
+    @staticmethod
     def _normalize_item(item: dict, platform_code: str) -> dict:
         content = item.get("desc", item.get("content", ""))
         title = item.get("title", "")
@@ -310,10 +343,10 @@ class MediaCrawlerWrapper:
             "title": title,
             "content": content,
             "author": item.get("nickname", item.get("author", "")),
-            "url": item.get("note_url", item.get("url", item.get("video_url", item.get("note_id", item.get("aweme_id", item.get("video_id", "")))))),
-            "likes": int(item.get("liked_count", item.get("likes", 0)) or 0),
-            "comments": int(item.get("comment_count", item.get("comments_count", item.get("comments", 0))) or 0),
-            "shares": int(item.get("share_count", item.get("shared_count", item.get("shares", 0))) or 0),
+            "url": item.get("note_url", item.get("url", item.get("video_url", item.get("note_id", item.get("aweme_id", item.get("video_id", "")))))).split("?")[0],
+            "likes": MediaCrawlerWrapper._safe_int(item.get("liked_count", item.get("likes", 0))),
+            "comments": MediaCrawlerWrapper._safe_int(item.get("comment_count", item.get("comments_count", item.get("comments", 0)))),
+            "shares": MediaCrawlerWrapper._safe_int(item.get("share_count", item.get("shared_count", item.get("shares", 0)))),
             "platform": platform_code,
             "source": "mediacrawler",
             "published_at": MediaCrawlerWrapper._extract_published_at(item),
