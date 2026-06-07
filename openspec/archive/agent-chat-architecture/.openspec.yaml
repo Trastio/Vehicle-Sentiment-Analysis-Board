@@ -1,0 +1,5 @@
+schema: spec-driven
+created: 2026-05-04
+status: superseded
+superseded_reason: "设计基于 Flask + LangGraph 技术栈，项目已迁移至 FastAPI + SQLAlchemy。聊天架构方案与当前看板式架构不兼容，保留供参考。"
+superseded_date: 2026-06-03
