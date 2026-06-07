@@ -1,10 +1,63 @@
-.secrets
-*.pyc
-__pycache__/
+# Environment & Secrets
 .env
+.secrets
+.secrets.bak
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
 node_modules/
-*.log
-logs/
-data/
-.claude/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Testing & Coverage
 .pytest_cache/
+.coverage
+htmlcov/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Data directories
+data/
+browser_data/
+logs/
+
+# Third-party vendor code (too large)
+vendor/
+
+# Training caches
+unsloth_compiled_cache/
+
+# Claude Code local settings
+.claude/settings.local.json
+.claude/
+
+# Understand Anything tool
+.understand-anything/
+
+# Pip accident files
+=*
+
+# OS files
+.DS_Store
+Thumbs.db
+*.log
